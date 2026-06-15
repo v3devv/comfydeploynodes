@@ -821,6 +821,15 @@ class ComfyUIDeployExternalVideo:
     FUNCTION = "load_video"
     CATEGORY = "🔗ComfyDeploy"
 
+    @classmethod
+    def VALIDATE_INPUTS(s, default_video=None, **kwargs):
+        # `default_video` is a fallback file-combo; on a serverless container the
+        # input dir is empty, so a value saved in the workflow won't be "in the
+        # list" and ComfyUI would reject the prompt before load_video runs. The
+        # real input comes from input_id (webhook URL/id) or default_value_url, so
+        # don't block on the combo check (mirrors external_audio.py / external_exr.py).
+        return True
+
     def load_video(self, **kwargs):
         input_id = kwargs.get("input_id")
         force_rate = kwargs.get("force_rate")
@@ -845,6 +854,7 @@ class ComfyUIDeployExternalVideo:
 
             print("Fetching video from URL: ", url)
             response = requests.get(url, stream=True)
+            response.raise_for_status()  # don't write an HTTP error body as a "video"
             file_size = int(response.headers.get("Content-Length", 0))
             file_extension = url.split(".")[-1].split("?")[
                 0
@@ -887,9 +897,12 @@ class ComfyUIDeployExternalVideo:
         )
 
     @classmethod
-    def IS_CHANGED(s, video, **kwargs):
-        image_path = folder_paths.get_annotated_filepath(video)
-        return calculate_file_hash(image_path)
+    def IS_CHANGED(s, **kwargs):
+        # This node has no "video" input (its inputs are input_id / default_video /
+        # default_value_url …), so the old `IS_CHANGED(s, video)` raised
+        # "missing 1 required positional argument: 'video'". URL-fed content can
+        # change between runs anyway → always re-execute.
+        return float("nan")
 
 
 NODE_CLASS_MAPPINGS = {"ComfyUIDeployExternalVideo": ComfyUIDeployExternalVideo}
