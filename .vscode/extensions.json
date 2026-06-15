@@ -1,0 +1,7 @@
+{
+  "recommendations": [
+    "bradlc.vscode-tailwindcss", // hinting / autocompletion for tailwind
+    "ban.spellright", // Spell check for docs
+    "biomejs.biome" // improved i18n DX
+  ]
+}

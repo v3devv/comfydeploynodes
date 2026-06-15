@@ -1,0 +1,17 @@
+{
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "quickfix.biome": "always"
+    // "source.organizeImports.biome": "explicit"
+  },
+  "typescript.preferences.importModuleSpecifier": "non-relative",
+  "spellright.language": ["en"],
+  "spellright.documentTypes": ["markdown", "typescript", "typescriptreact"],
+  "tailwindCSS.experimental.classRegex": [
+    ["cva\\(([^)]*)\\)", "[\"'`]([^\"'`]*).*?[\"'`]"]
+  ]
+  // "eslint.workingDirectories": [
+  //   { "mode": "auto" }
+  // ],
+}
