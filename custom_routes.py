@@ -371,7 +371,23 @@ def apply_random_seed_to_workflow(workflow_api, workflow):
 
     Args:
         workflow_api (dict): The workflow API dictionary to modify.
+        workflow (dict | None): The UI-format graph, used ONLY to honour a
+            KSampler's "fixed" seed mode. Optional — see below.
     """
+    # `workflow` is the UI graph, and it is genuinely optional: the run request
+    # declares it with a default of None, and a caller that submits a
+    # fully-resolved `workflow_api_json` has no UI graph to send. This crashed
+    # every such run at `workflow["nodes"]`:
+    #
+    #     TypeError: 'NoneType' object is not subscriptable
+    #
+    # The randomisation itself only needs `workflow_api`. The UI graph is
+    # consulted for one thing — whether a KSampler's seed widget says "fixed" —
+    # and with no UI graph there is no widget and therefore nothing to honour.
+    # So seeds are randomised as normal and the skip check is simply not
+    # applicable, rather than the whole run failing for a field nobody sent.
+    nodes = (workflow or {}).get("nodes") or []
+
     for key in workflow_api:
         if "inputs" in workflow_api[key]:
             if "seed" in workflow_api[key]["inputs"]:
@@ -385,7 +401,7 @@ def apply_random_seed_to_workflow(workflow_api, workflow):
                     False  # Add a flag to track if we should skip randomization
                 )
 
-                for node in workflow["nodes"]:
+                for node in nodes:
                     if str(node["id"]) == node_id and node["type"] == "KSampler":
                         # Check if this node has widgets_values and if seed setting is not "fixed"
                         if "widgets_values" in node and len(node["widgets_values"]) > 1:
