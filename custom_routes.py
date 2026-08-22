@@ -1,4 +1,5 @@
 from io import BytesIO
+import base64
 import os
 import folder_paths
 import json
@@ -192,6 +193,9 @@ from globals import (
     SimplePrompt,
     streaming_prompt_metadata,
     prompt_metadata,
+    # Preview frames are tagged with this, and it is the only way to tell a
+    # preview apart from any other binary frame in `send_bytes`.
+    BinaryEventTypes,
 )
 
 
@@ -2312,8 +2316,106 @@ async def update_run_with_output(
     await send("outputs_uploaded", {"prompt_id": prompt_id})
 
 
+# ── live latent previews ──────────────────────────────────────────────
+#
+# ComfyUI sends previews as BINARY frames through `send_bytes`. It never routes
+# them through `send_json`, and this module overrode `send_json` only — so the
+# entire preview stream was invisible here and nothing ever forwarded it.
+#
+# That is why previews were missing on this deployment while progress worked
+# perfectly: `progress`, `executing` and `executed` are JSON and went through
+# the override; the images went out a door nobody was watching. The symptom is
+# a sampler that reports progress and shows no image, which reads as "previews
+# are not implemented" rather than as a missing producer. The consumer end was
+# already built and waiting.
+#
+# OFF unless the machine opts in. These frames are tens of KB and arrive
+# several times a second, and each one becomes an HTTP POST into the run's
+# event stream. A consumer that reads its results from webhooks and never looks
+# at a preview would pay that for nothing.
+_PREVIEW_FORWARDING = (
+    os.environ.get("COMFYDEPLOY_FORWARD_PREVIEWS", "").lower() == "true"
+)
+# A preview is a progress indicator, not a deliverable. Two a second is well
+# past what anyone perceives, and the cost is per frame.
+_PREVIEW_MIN_INTERVAL = 0.5
+_preview_state = {"last": 0.0, "logged": False}
+
+logger.info(
+    f"comfy-deploy - preview forwarding: {_PREVIEW_FORWARDING} "
+    f"(COMFYDEPLOY_FORWARD_PREVIEWS={os.environ.get('COMFYDEPLOY_FORWARD_PREVIEWS', '<unset>')!r})"
+)
+
+
+def _preview_format(raw: bytes) -> str:
+    """"png" or "jpeg", read from the bytes themselves.
+
+    Sniffed rather than taken from ComfyUI's `send_image` argument: by the time
+    a frame reaches `send_bytes` the image is already encoded and the format
+    argument is long gone. Both magic numbers are unambiguous, and guessing
+    wrong only mislabels a frame the browser would decode anyway.
+    """
+    return "png" if raw[:4] == b"\x89PNG" else "jpeg"
+
+
+async def send_bytes_override(self, event, data, sid=None):
+    """Forward preview frames into the run's event stream, then send as normal.
+
+    The original call happens FIRST and unconditionally — anything watching the
+    container's own socket keeps working exactly as before, and a failure in
+    our forwarding can never cost ComfyUI its own delivery.
+    """
+    await self.send_bytes_original(event, data, sid)
+
+    if not _PREVIEW_FORWARDING or event != BinaryEventTypes.PREVIEW_IMAGE:
+        return
+    if not isinstance(data, (bytes, bytearray)):
+        return
+
+    now = time.time()
+    if now - _preview_state["last"] < _PREVIEW_MIN_INTERVAL:
+        return
+    _preview_state["last"] = now
+
+    # `send_bytes` carries no prompt id, so it comes from the server's own
+    # notion of what is executing. Without one the consumer cannot attribute
+    # the frame to a run and drops it, so there is nothing to gain by sending.
+    prompt_id = getattr(self, "last_prompt_id", None)
+    if not prompt_id:
+        return
+
+    raw = bytes(data)
+    # ComfyUI's own 4-byte binary header is stripped: the consumer re-frames
+    # these for the browser and would otherwise embed a header inside the
+    # image, producing a frame that decodes to nothing.
+    payload = raw[4:] if len(raw) > 4 else raw
+
+    if not _preview_state["logged"]:
+        _preview_state["logged"] = True
+        logger.info(f"comfy-deploy - forwarding first preview frame ({len(payload)} bytes)")
+
+    try:
+        await update_run_ws_event(
+            prompt_id,
+            "b_preview",
+            {
+                "prompt_id": prompt_id,
+                "image_b64": base64.b64encode(payload).decode(),
+                "format": _preview_format(payload),
+            },
+        )
+    except Exception as e:
+        # Best effort by design. A preview is cosmetic, and a run must never
+        # fail because a progress image could not be posted.
+        logger.debug(f"comfy-deploy - preview forward failed: {e}")
+
+
 prompt_server.send_json_original = prompt_server.send_json
 prompt_server.send_json = send_json_override.__get__(prompt_server, server.PromptServer)
+prompt_server.send_bytes_original = prompt_server.send_bytes
+prompt_server.send_bytes = send_bytes_override.__get__(
+    prompt_server, server.PromptServer
+)
 
 root_path = os.path.dirname(os.path.abspath(__file__))
 two_dirs_up = os.path.dirname(os.path.dirname(root_path))
