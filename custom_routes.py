@@ -369,7 +369,7 @@ def randomSeed(num_digits=15):
     return random.randint(range_start, range_end)
 
 
-def apply_random_seed_to_workflow(workflow_api, workflow):
+def apply_random_seed_to_workflow(workflow_api, workflow, randomize_seeds=False):
     """
     Applies a random seed to each element in the workflow_api that has a 'seed' input.
 
@@ -377,6 +377,8 @@ def apply_random_seed_to_workflow(workflow_api, workflow):
         workflow_api (dict): The workflow API dictionary to modify.
         workflow (dict | None): The UI-format graph, used ONLY to honour a
             KSampler's "fixed" seed mode. Optional — see below.
+        randomize_seeds (bool): Randomise anyway when there is no UI graph. Off
+            by default; see below for why the default is "honour what was sent".
     """
     # `workflow` is the UI graph, and it is genuinely optional: the run request
     # declares it with a default of None, and a caller that submits a
@@ -385,12 +387,46 @@ def apply_random_seed_to_workflow(workflow_api, workflow):
     #
     #     TypeError: 'NoneType' object is not subscriptable
     #
-    # The randomisation itself only needs `workflow_api`. The UI graph is
-    # consulted for one thing — whether a KSampler's seed widget says "fixed" —
-    # and with no UI graph there is no widget and therefore nothing to honour.
-    # So seeds are randomised as normal and the skip check is simply not
-    # applicable, rather than the whole run failing for a field nobody sent.
+    # The randomisation itself only needs `workflow_api`, so the obvious repair
+    # was to substitute an empty node list and carry on randomising. That is
+    # wrong, and quietly so, which is worse than the crash it replaced.
     nodes = (workflow or {}).get("nodes") or []
+
+    # NO UI GRAPH: the seed in `workflow_api` is the answer, not a starting
+    # point. Randomising it produces a run whose seed is not the seed anybody
+    # asked for or recorded.
+    #
+    # The UI graph is the ONLY thing that expresses `control_after_generate`.
+    # With one present, "fixed" is honoured and "randomize"/"increment" are
+    # serviced below, exactly as before. With none present there is no widget,
+    # no mode, and therefore no request to randomise anything — so overwriting
+    # the value is not "randomising as normal", it is discarding a resolved
+    # input.
+    #
+    # Concretely, on the comfy.proteafield.com path: ComfyUI's own frontend
+    # applies `control_after_generate` client-side in `afterQueued()`, AFTER it
+    # has built the prompt. The seed that arrives here is the seed the user was
+    # looking at when they pressed Queue, already advanced for them. The shim
+    # forwards `workflow_api_json` and no UI graph, so every one of those seeds
+    # was being thrown away and replaced — a KSampler pinned to "fixed" gave a
+    # different image every press, and the seed archived alongside the run was
+    # not the seed that produced the image. Nothing reported it: the substituted
+    # value is only ever logged inside the container.
+    #
+    # `noise_seed` (KSamplerAdvanced, SamplerCustom, RandomNoise, XlabsSampler)
+    # has no "fixed" check at all further down, so it is covered by the same
+    # gate rather than left as the one field a caller cannot pin.
+    #
+    # A caller that genuinely wants a fresh seed per call and has no editor to
+    # express it — an API deployment hit repeatedly with one saved graph — says
+    # so with `randomize_seeds: true` on the run body. Opt-in, because a wrong
+    # value that nobody can see is not a safe default.
+    if not nodes and not randomize_seeds:
+        logger.info(
+            "comfy-deploy - no UI graph in this run: honouring the submitted "
+            "seeds (send randomize_seeds=true to randomise anyway)"
+        )
+        return
 
     for key in workflow_api:
         if "inputs" in workflow_api[key]:
@@ -642,7 +678,9 @@ async def comfy_deploy_run(request):
     workflow = data.get("workflow")
 
     # Now it handles directly in here
-    apply_random_seed_to_workflow(workflow_api, workflow)
+    apply_random_seed_to_workflow(
+        workflow_api, workflow, randomize_seeds=bool(data.get("randomize_seeds", False))
+    )
     apply_inputs_to_workflow(workflow_api, inputs)
 
     prompt = {
@@ -717,7 +755,9 @@ async def stream_prompt(data, token):
     gpu_event_id = data.get("gpu_event_id", None)
 
     # Now it handles directly in here
-    apply_random_seed_to_workflow(workflow_api, workflow)
+    apply_random_seed_to_workflow(
+        workflow_api, workflow, randomize_seeds=bool(data.get("randomize_seeds", False))
+    )
     apply_inputs_to_workflow(workflow_api, inputs)
 
     prompt = {
