@@ -83,7 +83,25 @@ async def async_request_with_retry(
     for attempt in range(max_retries):
         try:
             if not disable_timeout:
-                timeout = ClientTimeout(total=None, connect=initial_timeout)
+                # `sock_read` and `sock_connect` are restated here, not
+                # inherited. aiohttp REPLACES the session timeout with a
+                # per-request one rather than merging them, so the session's
+                # `sock_read=60` vanished the moment this override was set and
+                # every default-path request became an unbounded read: a status
+                # endpoint that accepts the connection and then never answers
+                # held the coroutine open forever, past every retry, and the
+                # run's terminal status was never delivered — a permanent
+                # "running" on the consumer with nothing logged.
+                #
+                # Note the inversion this produced: `disable_timeout=True`
+                # falls through to the session timeout and IS bounded, while
+                # the default path was not.
+                timeout = ClientTimeout(
+                    total=None,
+                    connect=initial_timeout,
+                    sock_connect=initial_timeout,
+                    sock_read=60,
+                )
                 kwargs["timeout"] = timeout
 
             if token is not None:
