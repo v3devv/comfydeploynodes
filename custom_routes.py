@@ -2379,7 +2379,13 @@ _PREVIEW_FORWARDING = (
 # A preview is a progress indicator, not a deliverable. Two a second is well
 # past what anyone perceives, and the cost is per frame.
 _PREVIEW_MIN_INTERVAL = 0.5
-_preview_state = {"last": 0.0, "logged": False}
+# `inflight` is what makes the throttle above hold under a slow status endpoint.
+# The interval alone does not: frames reach `send_bytes` from ComfyUI's serial
+# publish loop, so if the POST for one frame takes longer than the interval,
+# every subsequent frame finds the interval already elapsed and is forwarded
+# too. The 2/s ceiling silently becomes "every frame the sampler ever emitted",
+# which is the opposite of a throttle.
+_preview_state = {"last": 0.0, "logged": False, "inflight": False}
 
 logger.info(
     f"comfy-deploy - preview forwarding: {_PREVIEW_FORWARDING} "
@@ -2398,6 +2404,31 @@ def _preview_format(raw: bytes) -> str:
     return "png" if raw[:4] == b"\x89PNG" else "jpeg"
 
 
+async def _forward_preview(prompt_id, payload):
+    """POST one preview frame, then release the in-flight slot.
+
+    Runs as its own task, NEVER inline on the send path — see
+    `send_bytes_override`. Best effort by design: a preview is cosmetic, and a
+    run must never fail because a progress image could not be posted.
+    """
+    try:
+        await update_run_ws_event(
+            prompt_id,
+            "b_preview",
+            {
+                "prompt_id": prompt_id,
+                "image_b64": base64.b64encode(payload).decode(),
+                "format": _preview_format(payload),
+            },
+        )
+    except Exception as e:
+        logger.debug(f"comfy-deploy - preview forward failed: {e}")
+    finally:
+        # In `finally` so a raising POST cannot wedge the slot shut and stop
+        # every later preview in the container's life.
+        _preview_state["inflight"] = False
+
+
 async def send_bytes_override(self, event, data, sid=None):
     """Forward preview frames into the run's event stream, then send as normal.
 
@@ -2410,6 +2441,11 @@ async def send_bytes_override(self, event, data, sid=None):
     if not _PREVIEW_FORWARDING or event != BinaryEventTypes.PREVIEW_IMAGE:
         return
     if not isinstance(data, (bytes, bytearray)):
+        return
+
+    # AT MOST ONE FORWARD IN FLIGHT. Dropping a progress image is free; queuing
+    # them is not, and there is no bound on how many the sampler will produce.
+    if _preview_state["inflight"]:
         return
 
     now = time.time()
@@ -2434,20 +2470,23 @@ async def send_bytes_override(self, event, data, sid=None):
         _preview_state["logged"] = True
         logger.info(f"comfy-deploy - forwarding first preview frame ({len(payload)} bytes)")
 
-    try:
-        await update_run_ws_event(
-            prompt_id,
-            "b_preview",
-            {
-                "prompt_id": prompt_id,
-                "image_b64": base64.b64encode(payload).decode(),
-                "format": _preview_format(payload),
-            },
-        )
-    except Exception as e:
-        # Best effort by design. A preview is cosmetic, and a run must never
-        # fail because a progress image could not be posted.
-        logger.debug(f"comfy-deploy - preview forward failed: {e}")
+    # DISPATCHED, NOT AWAITED — the same shape `send_json_override` uses, and
+    # for the same reason. ComfyUI serialises its outbound events through one
+    # `publish_loop` coroutine that awaits `send` per message, so awaiting an
+    # HTTP POST here stalls the whole event stream behind it: no `progress`, no
+    # `executing`, no `executed`, while messages pile up in an unbounded queue.
+    #
+    # The POST is not a fast call to gamble on. `async_request_with_retry`
+    # retries `MAX_RETRIES` (5) times with a doubling delay, so a status
+    # endpoint that is merely slow to accept costs ~31s of sleeps plus connect
+    # time before it gives up. Awaiting that meant a cosmetic progress image
+    # could freeze the run's live channel for half a minute and make a healthy
+    # generation look hung.
+    # Claimed BEFORE the task is created, never after: the task's `finally`
+    # clears the slot, and a clear that lands before the claim would wedge it
+    # shut for the rest of the container's life.
+    _preview_state["inflight"] = True
+    asyncio.create_task(_forward_preview(prompt_id, payload))
 
 
 prompt_server.send_json_original = prompt_server.send_json
