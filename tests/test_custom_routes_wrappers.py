@@ -175,6 +175,11 @@ def _child(fork_root, mode):
         print(_MARK + json.dumps(results), flush=True)
         return
 
+    if mode == "node-failure":
+        _node_failure_cases(custom_routes, srv, records, results)
+        print(_MARK + json.dumps(results), flush=True)
+        return
+
     def case(label, fn, expect):
         received.clear()
         try:
@@ -381,9 +386,124 @@ def _publish_guard_cases(custom_routes, srv, received, sent_data, fail_original,
     del custom_routes.prompt_metadata["p-7"]
 
 
+def _node_failure_cases(custom_routes, srv, records, results):
+    """A failed node's reason reaches the engine BEFORE the run is marked failed.
+
+    The engine fires its terminal webhook on the `failed` status POST, strips
+    `execution_error` outputs, and writes `live_status` only when `progress`
+    comes with it. So the reason travels as `live_status` + `progress` in its
+    own POST, awaited, and `status: failed` follows in a separate POST. Every
+    POST goes through `async_request_with_retry`, which is replaced here by a
+    recorder: the real update_run_with_output, update_run_live_status and
+    update_run build the bodies.
+    """
+    import asyncio
+    import types
+
+    posts = []
+    fail_when = {"pred": lambda body: False}
+
+    async def fake_request(method, url, disable_timeout=False, token=None, **kw):
+        body = kw.get("json")
+        posts.append(body)
+        if fail_when["pred"](body):
+            raise RuntimeError("engine said no")
+
+    custom_routes.async_request_with_retry = fake_request
+
+    def run(pid, data, progress=(), fail=lambda body: False):
+        custom_routes.prompt_metadata[pid] = types.SimpleNamespace(
+            workflow_api={str(i): {"class_type": "N", "inputs": {}} for i in range(1, 5)},
+            status_endpoint="http://engine.invalid/status", file_upload_endpoint=None,
+            token="t", gpu_event_id=None, is_realtime=False, start_time=None,
+            progress=set(progress), last_updated_node=None,
+            status=custom_routes.Status.RUNNING,
+        )
+        posts.clear()
+        records.clear()
+        fail_when["pred"] = fail
+        try:
+            asyncio.run(srv.send_json("execution_error", dict(data, prompt_id=pid), "sid-1"))
+            raised = None
+        except Exception as ex:
+            raised = f"{type(ex).__name__}: {ex}"
+        fail_when["pred"] = lambda body: False
+        live = [b for b in posts if "live_status" in b]
+        failed = [b for b in posts if b.get("status") == "failed"]
+        # The `ws_event` mirror of the event is a background task of its own
+        # and may land anywhere; only the three run-state POSTs are ordered.
+        order = ["live" if "live_status" in b else "failed" if b.get("status") == "failed"
+                 else "output" if "output_data" in b else "other" for b in posts]
+        order = [o for o in order if o != "other"]
+        return raised, live, failed, order
+
+    full = {
+        "node_id": "5", "node_type": "KSampler", "executed": ["1", "2"],
+        "exception_message": "CUDA out of memory.\nTried to allocate 2 GiB",
+        "exception_type": "torch.OutOfMemoryError",
+        "traceback": ["TRACEBACK-MARKER line 1\n", "TRACEBACK-MARKER line 2\n"],
+        "current_inputs": {"image": ["INPUT-MARKER"]},
+        "current_outputs": [],
+    }
+
+    # 1. The reason goes out first, with progress, and `failed` follows it.
+    label = "a failed node posts its reason with progress, then failed, in that order"
+    raised, live, failed, order = run("p-f1", full, progress=["1", "2"])
+    want = ("ComfyUI node failed: Node 5 (KSampler): torch.OutOfMemoryError: "
+            "CUDA out of memory. Tried to allocate 2 GiB")
+    ok = (raised is None and order == ["output", "live", "failed"]
+          and len(live) == 1 and live[0]["live_status"] == want
+          and live[0]["progress"] == 0.5 and "status" not in live[0]
+          and len(failed) == 1 and "live_status" not in failed[0])
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} order={order} live={live!r}"]
+
+    # 2. The reason carries no traceback and no inputs.
+    label = "the reason carries no traceback and no node inputs"
+    text = live[0]["live_status"] if live else ""
+    ok = bool(text) and "TRACEBACK-MARKER" not in text and "INPUT-MARKER" not in text
+    results[label] = ["ok" if ok else "fail", repr(text)]
+
+    # 3. The whole string is capped at 1000 characters.
+    label = "the reason is capped at 1000 characters"
+    raised, live, failed, order = run("p-f2", dict(full, exception_message="x" * 5000))
+    text = live[0]["live_status"] if live else ""
+    ok = (raised is None and len(text) == 1000 and text.startswith(
+        "ComfyUI node failed: Node 5 (KSampler): torch.OutOfMemoryError: xxx")
+          and order[-1] == "failed")
+    results[label] = ["ok" if ok else "fail", f"len={len(text)} order={order}"]
+
+    # 4. Missing fields render as `?`, never `None`; unknown progress is 0.
+    label = "missing fields render as ? and unknown progress as 0"
+    raised, live, failed, order = run("p-f3", {"node_type": None})
+    text = live[0]["live_status"] if live else ""
+    ok = (raised is None and text == "ComfyUI node failed: Node ? (?): ?: ?"
+          and live[0]["progress"] == 0 and order[-1] == "failed")
+    results[label] = ["ok" if ok else "fail", f"text={text!r} live={live!r} order={order}"]
+
+    # 5. The reason's POST failing is logged and the run still ends failed.
+    label = "a failing reason POST is logged and failed is still posted"
+    raised, live, failed, order = run(
+        "p-f4", full, fail=lambda body: "live_status" in body)
+    warned = [t for lvl, t in records if lvl == "WARNING" and "engine said no" in t]
+    ok = (raised is None and order == ["output", "live", "failed"] and len(warned) == 1)
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} order={order} warned={warned!r}"]
+
+    # 6. So does the raw-record POST failing before it.
+    label = "a failing output POST is logged and the reason and failed still post"
+    raised, live, failed, order = run(
+        "p-f5", full, fail=lambda body: "output_data" in body)
+    warned = [t for lvl, t in records if lvl == "WARNING" and "engine said no" in t]
+    ok = (raised is None and order == ["output", "live", "failed"] and len(warned) == 1)
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} order={order} warned={warned!r}"]
+
+
 def _run_child(mode):
     env = {k: v for k, v in os.environ.items()
-           if k not in ("CD_ENABLE_LOG", "USE_LOGFIRE", "PYTHONPATH")}
+           if k not in ("CD_ENABLE_LOG", "USE_LOGFIRE", "PYTHONPATH",
+                        "CD_ENABLE_RUN_LOG", "CD_BYPASS_UPLOAD", "MAX_RETRIES")}
     proc = subprocess.run(
         [sys.executable, os.path.abspath(__file__), "--child", FORK_ROOT, mode],
         capture_output=True, text=True, env=env, timeout=120,
@@ -435,6 +555,16 @@ class CustomRoutesWrappers(unittest.TestCase):
             "executed for a nested expanded node id uploads its output",
             "executed for a workflow node still uploads its output",
             "executed for a PreviewImage still uploads nothing",
+        })
+
+    def test_a_failed_node_posts_its_reason_before_the_run_is_marked_failed(self):
+        self._check(_run_child("node-failure"), {
+            "a failed node posts its reason with progress, then failed, in that order",
+            "the reason carries no traceback and no node inputs",
+            "the reason is capped at 1000 characters",
+            "missing fields render as ? and unknown progress as 0",
+            "a failing reason POST is logged and failed is still posted",
+            "a failing output POST is logged and the reason and failed still post",
         })
 
     def test_a_patch_that_fails_to_install_is_logged_and_comfyui_still_starts(self):

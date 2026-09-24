@@ -1580,6 +1580,85 @@ def _workflow_node_id(wf_api, node):
     return None
 
 
+# Frozen contract with the engine: a failure reason travels in `live_status`.
+# The engine's own prefixes are "ComfyUI worker crashed:" and "Reaped".
+_NODE_FAILED_PREFIX = "ComfyUI node failed: "
+_LIVE_STATUS_MAX = 1000
+
+
+def _node_failure_live_status(data):
+    """`ComfyUI node failed: Node <id> (<type>): <exc type>: <exc message>`.
+
+    From ComfyUI's `execution_error` payload. Never the traceback or the node's
+    inputs: this string is shown to whoever ran the workflow. A missing field
+    is `?`, never `None`. Whitespace runs, newlines included, collapse to one
+    space so the status stays on one line; the whole string is capped.
+    """
+
+    def field(key):
+        value = data.get(key)
+        if value is None:
+            return "?"
+        text = " ".join(str(value).split())
+        return text or "?"
+
+    text = (
+        f"{_NODE_FAILED_PREFIX}Node {field('node_id')} ({field('node_type')}): "
+        f"{field('exception_type')}: {field('exception_message')}"
+    )
+    return text[:_LIVE_STATUS_MAX]
+
+
+def _last_known_progress(prompt_id):
+    """The run's progress as last reported by `executing`, or 0."""
+    try:
+        meta = prompt_metadata[prompt_id]
+        total = len(meta.workflow_api)
+        if not total:
+            return 0
+        return min(round(len(meta.progress) / total, 2), 1)
+    except Exception:
+        return 0
+
+
+async def _report_node_failure(prompt_id, data):
+    """Record a failed node, post its reason, then mark the run failed.
+
+    Three POSTs, in this order, each awaited and each isolated from the others:
+    whatever the first two do, the run still ends `failed`.
+
+    1. The raw `execution_error` record, as before (the engine DB keeps it).
+    2. The reason as `live_status` + `progress`. The engine fires its terminal
+       webhook on the `failed` POST, strips `execution_error` outputs from it,
+       and writes `live_status` only when `progress` comes with it — so this
+       has to land first, and with progress, or the webhook says
+       "Executing <Node>" and the reason is lost.
+    3. `status: failed`, in its own POST.
+    """
+    log = getLogger("comfy-deploy")
+    try:
+        await update_run_with_output(prompt_id, data)
+    except Exception:
+        log.warning(
+            f"comfy-deploy - could not post the failed node's record for run "
+            f"{prompt_id}; posting its reason and failing the run regardless",
+            exc_info=True,
+        )
+    try:
+        await update_run_live_status(
+            prompt_id,
+            _node_failure_live_status(data),
+            _last_known_progress(prompt_id),
+        )
+    except Exception:
+        log.warning(
+            f"comfy-deploy - could not post the failure reason for run "
+            f"{prompt_id}; failing the run regardless",
+            exc_info=True,
+        )
+    await update_run(prompt_id, Status.FAILED)
+
+
 async def _handle_send_json(event, data, sid, original):
     """Everything send_json_override does besides ComfyUI's own send.
 
@@ -1741,10 +1820,7 @@ async def _handle_send_json(event, data, sid, original):
             # prompt_metadata[prompt_id]["progress"].update(data.get('nodes'))
 
     if event == "execution_error":
-        # Careful this might not be fully awaited.
-        await update_run_with_output(prompt_id, data)
-        await update_run(prompt_id, Status.FAILED)
-        # await update_run_with_output(prompt_id, data)
+        await _report_node_failure(prompt_id, data)
 
     if event == "executed" and "node" in data and "output" in data:
         node_meta = None
