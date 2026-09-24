@@ -574,6 +574,23 @@ def _node_failure_cases(custom_routes, srv, records, results, race=False):
         results[label] = ["ok" if ok else "fail",
                           f"raised={raised} order={order} cut={cut!r} texts={texts!r}"]
 
+        # 12. Neither POST the bound covers may opt out of the timeout, and the
+        #     cut has to reach the request itself rather than orphan a task that
+        #     goes on posting. `disable_timeout=True` on either of these is how
+        #     the measured ~80 s cut silently becomes unbounded again, and no
+        #     other case in the suite would notice.
+        label = "the reason and failed POSTs are cut, not left to the engine"
+        raised, live, failed, order, took, before = run(
+            "p-fb", full, hang=lambda body: True)
+        # The record and the `ws_event` mirror hang here too, but they are only
+        # ever cut by the loop's own shutdown; the bound covers these two.
+        critical = sorted(t for t in cut_during_run if t[0] in ("live", "failed"))
+        ok = (raised is None
+              and critical == [("failed", "CancelledError", False),
+                               ("live", "CancelledError", False)])
+        results[label] = ["ok" if ok else "fail",
+                          f"raised={raised} critical={critical!r} cut={cut_during_run!r}"]
+
 
     if race:
         race_cases()
@@ -744,6 +761,7 @@ class CustomRoutesWrappers(unittest.TestCase):
         self._check(_run_child("node-failure-race"), {
             "a stale Executing POST cannot land after the failure reason",
             "an Executing POST still in flight is abandoned, not left to land",
+            "the reason and failed POSTs are cut, not left to the engine",
         })
 
     def test_a_patch_that_fails_to_install_is_logged_and_comfyui_still_starts(self):
