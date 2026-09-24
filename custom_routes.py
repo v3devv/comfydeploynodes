@@ -1504,29 +1504,35 @@ _send_json_failures_logged = set()
 _SEND_JSON_FAILURES_LOGGED_MAX = 64
 
 
-def _log_send_json_failure(event, exc):
+def _log_send_json_failure(event, exc, source="ours"):
     """One traceback per distinct failure; repeats go to DEBUG.
 
     A failure here usually repeats on every event of a kind (every `executing`,
     every progress tick), so logging each one would bury the log. "Distinct"
-    is the exception type plus the line that raised it, never the message: a
-    message carries node and prompt ids and would make every event distinct.
+    is who failed (`source`: our handling, or ComfyUI's own send) plus the
+    exception type and the line that raised it, never the message: a message
+    carries node and prompt ids and would make every event distinct.
     """
     tb = exc.__traceback__
     while tb is not None and tb.tb_next is not None:
         tb = tb.tb_next
     where = (tb.tb_frame.f_code.co_filename, tb.tb_lineno) if tb else ("?", 0)
-    key = (type(exc).__name__, where)
+    key = (source, type(exc).__name__, where)
+    if source == "ours":
+        what = f"handling of the {event!r} event failed; ComfyUI still sends it"
+    else:
+        what = (f"ComfyUI's own send of the {event!r} event failed; that event "
+                "is lost, the server carries on")
     log = getLogger("comfy-deploy")
     if key in _send_json_failures_logged or (
         len(_send_json_failures_logged) >= _SEND_JSON_FAILURES_LOGGED_MAX
     ):
-        log.debug(f"comfy-deploy - handling of {event!r} failed again: {exc!r}")
+        log.debug(f"comfy-deploy - {what} (again): {exc!r}")
         return
     _send_json_failures_logged.add(key)
     log.warning(
-        f"comfy-deploy - handling of the {event!r} event failed; ComfyUI still "
-        "sends it. Later failures at this same place are logged at DEBUG only.",
+        f"comfy-deploy - {what}. Later failures at this same place are logged "
+        "at DEBUG only.",
         exc_info=(type(exc), exc, exc.__traceback__),
     )
 
@@ -1536,10 +1542,15 @@ async def send_json_override(self, event, data, sid=None, *args, **kwargs):
 
     This runs inside ComfyUI's single `publish_loop`, which sits in the
     `asyncio.gather` in ComfyUI's main.py: anything raised here ends the WHOLE
-    server ("Exiting the application"). So our own handling never raises out
-    of here. ComfyUI's own send is started first and awaited last, with the
-    arguments it was given, whatever our handling did; its exceptions are
-    ComfyUI's and propagate.
+    server ("Exiting the application"), and with it every run on the
+    container. So no failure leaves here: not our handling's, and not ComfyUI's
+    own send's either, which the old `asyncio.wait` never let out and which
+    costs one event where a raise would cost the server. Both are logged, once
+    per distinct failure. ComfyUI's own send is started first and awaited
+    last, with the arguments it was given, whatever our handling did.
+
+    Cancellation (and any BaseException that is not an Exception) DOES
+    propagate: it is how shutdown stops the loop, not a failure.
 
     `*args, **kwargs`: anything ComfyUI appends to send_json reaches the
     original untouched instead of raising TypeError in its publish loop.
@@ -1548,7 +1559,10 @@ async def send_json_override(self, event, data, sid=None, *args, **kwargs):
         # ComfyUI only sends dicts here, but any custom node may call
         # `send_sync("x", "a string")` or pass a list. There is no prompt id to
         # track, so it goes straight through.
-        await self.send_json_original(event, data, sid, *args, **kwargs)
+        try:
+            await self.send_json_original(event, data, sid, *args, **kwargs)
+        except Exception as exc:
+            _log_send_json_failure(event, exc, source="comfyui")
         return
 
     original = asyncio.ensure_future(
@@ -1558,7 +1572,10 @@ async def send_json_override(self, event, data, sid=None, *args, **kwargs):
         await _handle_send_json(event, data, sid, original)
     except Exception as exc:
         _log_send_json_failure(event, exc)
-    await original
+    try:
+        await original
+    except Exception as exc:
+        _log_send_json_failure(event, exc, source="comfyui")
 
 
 def _workflow_node_id(wf_api, node):

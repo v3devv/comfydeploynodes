@@ -85,7 +85,7 @@ def _child(fork_root, mode):
 
     received = []
     sent_data = []
-    fail_original = {"on": False}
+    fail_original = {"on": None}  # an exception ComfyUI's send_json raises
 
     class Routes:
         def _deco(self, *a, **k):
@@ -111,8 +111,8 @@ def _child(fork_root, mode):
         async def send_json(self, event, data, sid=None, broadcast=False):
             received.append(("send_json", event, sid, broadcast))
             sent_data.append(data)
-            if fail_original["on"]:
-                raise RuntimeError("socket said no")
+            if fail_original["on"] is not None:
+                raise fail_original["on"]
 
         def send_sync(self, event, data, sid=None, broadcast=False):
             received.append(("send_sync", event, sid, broadcast))
@@ -320,21 +320,44 @@ def _publish_guard_cases(custom_routes, srv, received, sent_data, fail_original,
         f"outcomes={outcomes!r} tracebacks={tracebacks!r}",
     ]
 
-    # 3. ComfyUI's own send raising is ComfyUI's business: it propagates.
-    label = "an exception from ComfyUI's own send propagates"
-    fail_original["on"] = True
+    # 3. ComfyUI's own send raising must not end the server either: a dead
+    #    server fails every run on the container, one lost event fails none.
+    #    Logged once per distinct failure, like our own.
+    label = "an exception from ComfyUI's own send is logged once and not raised"
+    getattr(custom_routes, "_send_json_failures_logged", set()).clear()
+    records.clear()
+    fail_original["on"] = RuntimeError("socket said no")
+    seen = []
+    for payload in ({"prompt_id": None}, {"prompt_id": None}, "a plain string payload"):
+        try:
+            send("status", payload)
+            seen.append("nothing raised" if len(received) == 1 else f"received={received!r}")
+        except BaseException as ex:
+            seen.append(f"raised {type(ex).__name__}: {ex}")
+    fail_original["on"] = None
+    tracebacks = [t for lvl, t in records
+                  if lvl == "WARNING" and "RuntimeError('socket said no')" in t]
+    results[label] = [
+        "ok" if seen == ["nothing raised"] * 3 and len(tracebacks) == 1 else "fail",
+        f"seen={seen!r} tracebacks={tracebacks!r}",
+    ]
+
+    # 3b. Cancellation is not a failure: it is how shutdown stops the loop,
+    #     and it must still get out, for a dict and a non-dict payload alike.
+    label = "a CancelledError from ComfyUI's own send propagates"
+    fail_original["on"] = asyncio.CancelledError()
     seen = []
     for payload in ({"prompt_id": None}, "a plain string payload"):
         try:
             send("status", payload)
             seen.append("nothing raised")
-        except RuntimeError as ex:
-            seen.append(str(ex))
-        except Exception as ex:
+        except asyncio.CancelledError:
+            seen.append("CancelledError")
+        except BaseException as ex:
             seen.append(f"raised {type(ex).__name__}: {ex}")
-    fail_original["on"] = False
+    fail_original["on"] = None
     results[label] = [
-        "ok" if seen == ["socket said no", "socket said no"] else "fail", repr(seen)
+        "ok" if seen == ["CancelledError", "CancelledError"] else "fail", repr(seen)
     ]
 
     # 4. `executed` for a node that a custom node's graph EXPANSION created:
@@ -550,7 +573,8 @@ class CustomRoutesWrappers(unittest.TestCase):
             "send_json hands a list payload to ComfyUI's send unchanged",
             "send_json hands None payload to ComfyUI's send unchanged",
             "a failing handler is logged once and ComfyUI's send still runs every time",
-            "an exception from ComfyUI's own send propagates",
+            "an exception from ComfyUI's own send is logged once and not raised",
+            "a CancelledError from ComfyUI's own send propagates",
             "executed for an expanded node id uploads its output",
             "executed for a nested expanded node id uploads its output",
             "executed for a workflow node still uploads its output",
