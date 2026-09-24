@@ -84,6 +84,8 @@ def _child(fork_root, mode):
     aiohttp.ClientError = type("ClientError", (Exception,), {})
 
     received = []
+    sent_data = []
+    fail_original = {"on": False}
 
     class Routes:
         def _deco(self, *a, **k):
@@ -108,6 +110,9 @@ def _child(fork_root, mode):
 
         async def send_json(self, event, data, sid=None, broadcast=False):
             received.append(("send_json", event, sid, broadcast))
+            sent_data.append(data)
+            if fail_original["on"]:
+                raise RuntimeError("socket said no")
 
         def send_sync(self, event, data, sid=None, broadcast=False):
             received.append(("send_sync", event, sid, broadcast))
@@ -163,6 +168,12 @@ def _child(fork_root, mode):
         return
 
     srv = PromptServer.instance
+
+    if mode == "publish-guard":
+        _publish_guard_cases(custom_routes, srv, received, sent_data,
+                             fail_original, records, results)
+        print(_MARK + json.dumps(results), flush=True)
+        return
 
     def case(label, fn, expect):
         received.clear()
@@ -240,6 +251,136 @@ def _child(fork_root, mode):
     print(_MARK + json.dumps(results), flush=True)
 
 
+def _publish_guard_cases(custom_routes, srv, received, sent_data, fail_original,
+                         records, results):
+    """send_json runs inside ComfyUI's single publish loop.
+
+    That loop sits in the `asyncio.gather` in ComfyUI's main.py, so anything
+    raised out of send_json ends the WHOLE server ("Exiting the application").
+    A third-party node calling `PromptServer.instance.send_sync("x", "a string")`
+    did exactly that on 0.37.0: the fork read `data.get("prompt_id")` off a str.
+    """
+    import asyncio
+    import types
+
+    def send(event, data):
+        received.clear()
+        sent_data.clear()
+        asyncio.run(srv.send_json(event, data, "sid-1"))
+
+    # 1. Payloads that are not a dict go to ComfyUI's send untouched, and are
+    #    not treated as a failure: there is simply no prompt id to track.
+    for what, payload in (("a string", "a plain string payload"),
+                          ("a list", ["a", 1]),
+                          ("None", None)):
+        label = f"send_json hands {what} payload to ComfyUI's send unchanged"
+        records.clear()
+        # Failures are logged once per place; forget the earlier cases' so a
+        # payload that fails where the one before it did still shows up here.
+        getattr(custom_routes, "_send_json_failures_logged", set()).clear()
+        try:
+            send("reviewer-str", payload)
+        except Exception as ex:
+            results[label] = ["fail", f"raised {type(ex).__name__}: {ex}"]
+            continue
+        warned = [t for lvl, t in records if lvl in ("WARNING", "ERROR", "CRITICAL")]
+        ok = (received == [("send_json", "reviewer-str", "sid-1", False)]
+              and len(sent_data) == 1 and sent_data[0] is payload and not warned)
+        results[label] = ["ok" if ok else "fail",
+                          f"received={received!r} data={sent_data!r} warned={warned!r}"]
+
+    # 2. The fork's own handling failing is logged, ONCE per distinct failure,
+    #    and ComfyUI's send still goes out with the original arguments.
+    def boom(*a, **k):
+        raise RuntimeError("handler said no")
+
+    real_done = custom_routes.mark_prompt_done
+    custom_routes.mark_prompt_done = boom
+    records.clear()
+    label = "a failing handler is logged once and ComfyUI's send still runs every time"
+    outcomes = []
+    event_data = {"node": None, "prompt_id": "p-9"}
+    for _ in range(3):
+        try:
+            send("executing", event_data)
+            outcomes.append(received == [("send_json", "executing", "sid-1", False)]
+                            and sent_data == [event_data] and sent_data[0] is event_data)
+        except Exception as ex:
+            outcomes.append(f"raised {type(ex).__name__}: {ex}")
+    custom_routes.mark_prompt_done = real_done
+    tracebacks = [t for lvl, t in records
+                  if lvl == "WARNING" and "RuntimeError('handler said no')" in t]
+    results[label] = [
+        "ok" if outcomes == [True, True, True] and len(tracebacks) == 1 else "fail",
+        f"outcomes={outcomes!r} tracebacks={tracebacks!r}",
+    ]
+
+    # 3. ComfyUI's own send raising is ComfyUI's business: it propagates.
+    label = "an exception from ComfyUI's own send propagates"
+    fail_original["on"] = True
+    seen = []
+    for payload in ({"prompt_id": None}, "a plain string payload"):
+        try:
+            send("status", payload)
+            seen.append("nothing raised")
+        except RuntimeError as ex:
+            seen.append(str(ex))
+        except Exception as ex:
+            seen.append(f"raised {type(ex).__name__}: {ex}")
+    fail_original["on"] = False
+    results[label] = [
+        "ok" if seen == ["socket said no", "socket said no"] else "fail", repr(seen)
+    ]
+
+    # 4. `executed` for a node that a custom node's graph EXPANSION created:
+    #    ComfyUI 0.37.0 names it "<parent>.<call>.<graph>.<id>", which is not a
+    #    key of the submitted workflow. Its output must still be uploaded.
+    uploads = []
+
+    async def fake_upload(prompt_id, data, node_id=None, node_meta=None,
+                          gpu_event_id=None):
+        uploads.append([prompt_id, node_id, node_meta])
+
+    real_upload = custom_routes.update_run_with_output
+    custom_routes.update_run_with_output = fake_upload
+    custom_routes.prompt_metadata["p-7"] = types.SimpleNamespace(
+        workflow_api={
+            "3": {"class_type": "SaveImage", "inputs": {}},
+            "4": {"class_type": "PreviewImage", "inputs": {}},
+            "5": {"class_type": "ExpandsToSave", "inputs": {}},
+        },
+        status_endpoint=None, token=None, gpu_event_id=None, is_realtime=False,
+        start_time=None, progress=set(), last_updated_node=None, status=None,
+    )
+    out = {"images": [{"filename": "a.png", "subfolder": "", "type": "output"}]}
+    for label, node, expect in (
+        ("executed for an expanded node id uploads its output",
+         "5.0.0.1", [["p-7", "5.0.0.1", {"node_id": "5.0.0.1", "node_class": "ExpandsToSave"}]]),
+        ("executed for a nested expanded node id uploads its output",
+         "5.0.0.1.2.0.3", [["p-7", "5.0.0.1.2.0.3",
+                            {"node_id": "5.0.0.1.2.0.3", "node_class": "ExpandsToSave"}]]),
+        ("executed for a workflow node still uploads its output",
+         "3", [["p-7", "3", {"node_id": "3", "node_class": "SaveImage"}]]),
+        ("executed for a PreviewImage still uploads nothing", "4", []),
+    ):
+        uploads.clear()
+        records.clear()
+        payload = {"node": node, "display_node": node.split(".")[0], "output": out,
+                   "prompt_id": "p-7"}
+        try:
+            send("executed", payload)
+        except Exception as ex:
+            results[label] = ["fail", f"raised {type(ex).__name__}: {ex}"]
+            continue
+        warned = [t for lvl, t in records if lvl in ("WARNING", "ERROR", "CRITICAL")]
+        ok = (uploads == expect and not warned
+              and received == [("send_json", "executed", "sid-1", False)])
+        results[label] = ["ok" if ok else "fail",
+                          f"uploads={uploads!r} warned={warned!r} received={received!r}"]
+    custom_routes.update_run_with_output = real_upload
+    del custom_routes.prompt_metadata["p-7"]
+
+
 def _run_child(mode):
     env = {k: v for k, v in os.environ.items()
            if k not in ("CD_ENABLE_LOG", "USE_LOGFIRE", "PYTHONPATH")}
@@ -282,6 +423,19 @@ class CustomRoutesWrappers(unittest.TestCase):
 
     def test_the_wrappers_pass_through_what_comfyui_adds(self):
         self._check(_run_child("normal"), self.EXPECTED)
+
+    def test_send_json_never_raises_its_own_failure_into_the_publish_loop(self):
+        self._check(_run_child("publish-guard"), {
+            "send_json hands a string payload to ComfyUI's send unchanged",
+            "send_json hands a list payload to ComfyUI's send unchanged",
+            "send_json hands None payload to ComfyUI's send unchanged",
+            "a failing handler is logged once and ComfyUI's send still runs every time",
+            "an exception from ComfyUI's own send propagates",
+            "executed for an expanded node id uploads its output",
+            "executed for a nested expanded node id uploads its output",
+            "executed for a workflow node still uploads its output",
+            "executed for a PreviewImage still uploads nothing",
+        })
 
     def test_a_patch_that_fails_to_install_is_logged_and_comfyui_still_starts(self):
         self._check(

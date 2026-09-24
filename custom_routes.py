@@ -1497,9 +1497,96 @@ server.PromptServer.send_sync = swizzle_send_sync
 send_json = prompt_server.send_json
 
 
+# Distinct failures of our own send_json handling already logged with a
+# traceback. Bounded: past the cap nothing new is recorded, so a failure that
+# varies per event cannot grow this without limit.
+_send_json_failures_logged = set()
+_SEND_JSON_FAILURES_LOGGED_MAX = 64
+
+
+def _log_send_json_failure(event, exc):
+    """One traceback per distinct failure; repeats go to DEBUG.
+
+    A failure here usually repeats on every event of a kind (every `executing`,
+    every progress tick), so logging each one would bury the log. "Distinct"
+    is the exception type plus the line that raised it, never the message: a
+    message carries node and prompt ids and would make every event distinct.
+    """
+    tb = exc.__traceback__
+    while tb is not None and tb.tb_next is not None:
+        tb = tb.tb_next
+    where = (tb.tb_frame.f_code.co_filename, tb.tb_lineno) if tb else ("?", 0)
+    key = (type(exc).__name__, where)
+    log = getLogger("comfy-deploy")
+    if key in _send_json_failures_logged or (
+        len(_send_json_failures_logged) >= _SEND_JSON_FAILURES_LOGGED_MAX
+    ):
+        log.debug(f"comfy-deploy - handling of {event!r} failed again: {exc!r}")
+        return
+    _send_json_failures_logged.add(key)
+    log.warning(
+        f"comfy-deploy - handling of the {event!r} event failed; ComfyUI still "
+        "sends it. Later failures at this same place are logged at DEBUG only.",
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+
+
 async def send_json_override(self, event, data, sid=None, *args, **kwargs):
-    # `*args, **kwargs`: anything ComfyUI appends to send_json reaches the
-    # original untouched instead of raising TypeError in its publish loop.
+    """Mirror ComfyUI's event to our sockets and track the run, then send it.
+
+    This runs inside ComfyUI's single `publish_loop`, which sits in the
+    `asyncio.gather` in ComfyUI's main.py: anything raised here ends the WHOLE
+    server ("Exiting the application"). So our own handling never raises out
+    of here. ComfyUI's own send is started first and awaited last, with the
+    arguments it was given, whatever our handling did; its exceptions are
+    ComfyUI's and propagate.
+
+    `*args, **kwargs`: anything ComfyUI appends to send_json reaches the
+    original untouched instead of raising TypeError in its publish loop.
+    """
+    if not isinstance(data, dict):
+        # ComfyUI only sends dicts here, but any custom node may call
+        # `send_sync("x", "a string")` or pass a list. There is no prompt id to
+        # track, so it goes straight through.
+        await self.send_json_original(event, data, sid, *args, **kwargs)
+        return
+
+    original = asyncio.ensure_future(
+        self.send_json_original(event, data, sid, *args, **kwargs)
+    )
+    try:
+        await _handle_send_json(event, data, sid, original)
+    except Exception as exc:
+        _log_send_json_failure(event, exc)
+    await original
+
+
+def _workflow_node_id(wf_api, node):
+    """The submitted workflow's key for `node`, or None.
+
+    A node created by a custom node's graph EXPANSION is named
+    "<parent>.<call>.<graph>.<id>" by ComfyUI (GraphBuilder.alloc_prefix), and
+    expansions nest, so "23.0.0.1.2.0.3" is possible. None of those is a key of
+    the submitted workflow; the part before the first dot is the real node that
+    expanded, which is also what ComfyUI displays for it.
+    """
+    node = str(node)
+    if node in wf_api:
+        return node
+    if "." in node:
+        base = node.split(".")[0]
+        if base in wf_api:
+            return base
+    return None
+
+
+async def _handle_send_json(event, data, sid, original):
+    """Everything send_json_override does besides ComfyUI's own send.
+
+    `original` is ComfyUI's send, already running: it is waited on alongside
+    the mirror to our sockets before any run tracking, as it always was. A
+    `return` here ends only our handling; the caller still awaits `original`.
+    """
     prompt_id = data.get("prompt_id")
 
     target_sid = sid
@@ -1510,9 +1597,7 @@ async def send_json_override(self, event, data, sid=None, *args, **kwargs):
     await asyncio.wait(
         [
             asyncio.create_task(send(event, data, sid=target_sid)),
-            asyncio.create_task(
-                self.send_json_original(event, data, sid, *args, **kwargs)
-            ),
+            original,
         ]
     )
 
@@ -1608,13 +1693,10 @@ async def send_json_override(self, event, data, sid=None, *args, **kwargs):
             wf_api = prompt_metadata[prompt_id].workflow_api
 
             # Normalize dotted display ids like "23.0.0.1" to base "23"
-            if node not in wf_api and "." in node:
-                base = node.split(".")[0]
-                if base in wf_api:
-                    node = base
+            node = _workflow_node_id(wf_api, raw_node)
 
             # If still unknown, skip safely
-            if node not in wf_api:
+            if node is None:
                 logger.info(f"Skipping unknown node id in 'executing': {raw_node}")
                 return
 
@@ -1668,7 +1750,13 @@ async def send_json_override(self, event, data, sid=None, *args, **kwargs):
         node_meta = None
         if prompt_id in prompt_metadata:
             node = data.get("node")
-            class_type = prompt_metadata[prompt_id].workflow_api[node]["class_type"]
+            # An expanded node's id is not a workflow key; indexing with it
+            # raised KeyError and lost the node's output. Its class is taken
+            # from the real node that expanded, but the upload keeps the
+            # node's OWN id so two expanded outputs never share one slot.
+            wf_api = prompt_metadata[prompt_id].workflow_api
+            wf_node = _workflow_node_id(wf_api, node)
+            class_type = wf_api[wf_node]["class_type"] if wf_node is not None else None
             node_meta = {
                 "node_id": node,
                 "node_class": class_type,
