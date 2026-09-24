@@ -409,6 +409,40 @@ def _publish_guard_cases(custom_routes, srv, received, sent_data, fail_original,
     custom_routes.update_run_with_output = real_upload
     del custom_routes.prompt_metadata["p-7"]
 
+    # 5. The one-traceback-per-distinct-failure cap must not LATCH. Once the cap
+    #    is reached, a further DISTINCT failure -- an unrelated thing breaking --
+    #    must still be logged once. ComfyUI's default level is INFO, so a new
+    #    failure dropped to DEBUG is a failure nobody ever sees.
+    label = "a new distinct failure is still logged once past the cap"
+    real_done = custom_routes.mark_prompt_done
+    real_max = custom_routes._SEND_JSON_FAILURES_LOGGED_MAX
+    custom_routes._SEND_JSON_FAILURES_LOGGED_MAX = 2
+
+    def raiser(exc):
+        def boom_typed(*a, **k):
+            raise exc("cap probe")
+
+        return boom_typed
+
+    # Same line, different exception type: four DISTINCT keys.
+    levels = []
+    custom_routes._send_json_failures_logged.clear()
+    for exc in (RuntimeError, ValueError, TypeError, KeyError):
+        custom_routes.mark_prompt_done = raiser(exc)
+        records.clear()
+        try:
+            send("executing", {"node": None, "prompt_id": "p-cap"})
+        except Exception as ex:
+            levels.append(f"raised {type(ex).__name__}: {ex}")
+            continue
+        levels.append(next((lvl for lvl, t in records if "cap probe" in t), "none"))
+    custom_routes.mark_prompt_done = real_done
+    custom_routes._SEND_JSON_FAILURES_LOGGED_MAX = real_max
+    custom_routes._send_json_failures_logged.clear()
+    ok = (levels == ["WARNING"] * 4
+          and len(custom_routes._send_json_failures_logged) == 0)
+    results[label] = ["ok" if ok else "fail", f"levels={levels!r}"]
+
 
 def _node_failure_cases(custom_routes, srv, records, results, race=False):
     """A failed node's reason reaches the engine, then `failed`, both bounded.
@@ -742,6 +776,7 @@ class CustomRoutesWrappers(unittest.TestCase):
             "executed for a nested expanded node id uploads its output",
             "executed for a workflow node still uploads its output",
             "executed for a PreviewImage still uploads nothing",
+            "a new distinct failure is still logged once past the cap",
         })
 
     def test_a_failed_node_posts_its_reason_before_the_run_is_marked_failed(self):

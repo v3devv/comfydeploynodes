@@ -1498,8 +1498,9 @@ send_json = prompt_server.send_json
 
 
 # Distinct failures of our own send_json handling already logged with a
-# traceback. Bounded: past the cap nothing new is recorded, so a failure that
-# varies per event cannot grow this without limit.
+# traceback. Bounded: reaching the cap starts a fresh window, so a failure that
+# varies per event cannot grow this without limit, and a new DISTINCT failure
+# past the cap is still logged rather than being silenced for good.
 _send_json_failures_logged = set()
 _SEND_JSON_FAILURES_LOGGED_MAX = 64
 
@@ -1524,11 +1525,16 @@ def _log_send_json_failure(event, exc, source="ours"):
         what = (f"ComfyUI's own send of the {event!r} event failed; that event "
                 "is lost, the server carries on")
     log = getLogger("comfy-deploy")
-    if key in _send_json_failures_logged or (
-        len(_send_json_failures_logged) >= _SEND_JSON_FAILURES_LOGGED_MAX
-    ):
+    if key in _send_json_failures_logged:
         log.debug(f"comfy-deploy - {what} (again): {exc!r}")
         return
+    if len(_send_json_failures_logged) >= _SEND_JSON_FAILURES_LOGGED_MAX:
+        # The cap used to LATCH: past it every FURTHER DISTINCT failure -- an
+        # unrelated thing breaking -- dropped to DEBUG for the container's life,
+        # and ComfyUI's default level is INFO, so nobody ever saw it. Start a
+        # fresh window instead: the set stays bounded, and a repeat still costs
+        # one WARNING per window rather than one per event.
+        _send_json_failures_logged.clear()
     _send_json_failures_logged.add(key)
     log.warning(
         f"comfy-deploy - {what}. Later failures at this same place are logged "
