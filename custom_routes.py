@@ -1400,87 +1400,23 @@ def handle_execute(class_type, last_node_id, prompt_id, server, unique_id):
         # print(f"#{unique_id} [{class_type}]: {execution_time:.2f}s - vram {vram_used}b")
 
 
+# Per-node timing: `execution.execute` is wrapped so `handle_execute` runs after
+# each node. The wrapper lives in its own module, importable without ComfyUI, so
+# tests/test_execute_swizzle.py can run it. It forwards whatever ComfyUI passes
+# instead of naming execute()'s parameters: the hand-written list this replaces
+# raised TypeError on ComfyUI 0.36.0+ (12 parameters), inside the prompt worker
+# thread, and every run on the container hung.
 try:
-    origin_execute = execution.execute
-    is_async = asyncio.iscoroutinefunction(origin_execute)
+    from comfydeploy_execute_swizzle import install_execute_swizzle
 
-    if is_async:
-        # Check signature for backward compatibility (v0.3.67 has 10 params, v0.3.68+ has 11)
-        sig = inspect.signature(origin_execute)
-        has_ui_outputs = len(sig.parameters) >= 11
-
-        async def swizzle_execute(
-            server,
-            dynprompt,
-            caches,
-            current_item,
-            extra_data,
-            executed,
-            prompt_id,
-            execution_list,
-            pending_subgraph_results,
-            pending_async_nodes,
-            ui_outputs=None,
-        ):
-            unique_id = current_item
-            class_type = dynprompt.get_node(unique_id)["class_type"]
-            last_node_id = server.last_node_id
-
-            # Build args list - add ui_outputs only for v0.3.68+
-            args = [
-                server,
-                dynprompt,
-                caches,
-                current_item,
-                extra_data,
-                executed,
-                prompt_id,
-                execution_list,
-                pending_subgraph_results,
-                pending_async_nodes,
-            ]
-            if has_ui_outputs:
-                args.append(ui_outputs)
-
-            result = await origin_execute(*args)
-
-            handle_execute(class_type, last_node_id, prompt_id, server, unique_id)
-            return result
-    else:
-        # Sync version for very old ComfyUI versions
-        def swizzle_execute(
-            server,
-            dynprompt,
-            caches,
-            current_item,
-            extra_data,
-            executed,
-            prompt_id,
-            execution_list,
-            pending_subgraph_results,
-        ):
-            unique_id = current_item
-            class_type = dynprompt.get_node(unique_id)["class_type"]
-            last_node_id = server.last_node_id
-
-            result = origin_execute(
-                server,
-                dynprompt,
-                caches,
-                current_item,
-                extra_data,
-                executed,
-                prompt_id,
-                execution_list,
-                pending_subgraph_results,
-            )
-
-            handle_execute(class_type, last_node_id, prompt_id, server, unique_id)
-            return result
-
-    execution.execute = swizzle_execute
+    install_execute_swizzle(execution, handle_execute)
 except Exception:
-    pass
+    # Non-fatal, ComfyUI must still start. Not silent: a patch that failed to
+    # install is otherwise indistinguishable from one that works.
+    getLogger("comfy-deploy").exception(
+        "comfy-deploy - could not install the execute timing patch; "
+        "runs are unaffected, per-node timings will be missing"
+    )
 
 
 def format_table(headers, data):
@@ -1513,30 +1449,47 @@ def format_table(headers, data):
 origin_func = server.PromptServer.send_sync
 
 
-def swizzle_send_sync(self, event, data, sid=None):
-    # print(f"swizzle_send_sync, event: {event}, data: {data}")
+def swizzle_send_sync(self, event, data, sid=None, *args, **kwargs):
+    # `*args, **kwargs` are ComfyUI's, passed through untouched: a parameter it
+    # appends to send_sync must not become a TypeError here. This runs on the
+    # prompt worker thread, where a fixed parameter list on the execute wrapper
+    # already killed the thread and hung every run (see
+    # comfydeploy_execute_swizzle). The timing around the call is ours and is
+    # never allowed to fail the send: execute() would report it as a failed node.
     global CURRENT_START_EXECUTION_DATA
-    if event == "execution_start":
-        global NODE_EXECUTION_TIMES
-        NODE_EXECUTION_TIMES = {}  # Reset execution times at start
-        CURRENT_START_EXECUTION_DATA = dict(
-            start_perf_time=time.perf_counter(),
-            nodes_start_perf_time={},
-            nodes_start_vram={},
+    try:
+        if event == "execution_start":
+            global NODE_EXECUTION_TIMES
+            NODE_EXECUTION_TIMES = {}  # Reset execution times at start
+            CURRENT_START_EXECUTION_DATA = dict(
+                start_perf_time=time.perf_counter(),
+                nodes_start_perf_time={},
+                nodes_start_vram={},
+            )
+    except Exception:
+        getLogger("comfy-deploy").warning(
+            "comfy-deploy - per-node timing reset failed; the run continues",
+            exc_info=True,
         )
 
-    origin_func(self, event=event, data=data, sid=sid)
+    origin_func(self, event, data, sid, *args, **kwargs)
 
-    if event == "executing" and data and CURRENT_START_EXECUTION_DATA:
-        if data.get("node") is not None:
-            node_id = data.get("node")
-            CURRENT_START_EXECUTION_DATA["nodes_start_perf_time"][node_id] = (
-                time.perf_counter()
-            )
-            reset_peak_memory_record()
-            CURRENT_START_EXECUTION_DATA["nodes_start_vram"][node_id] = (
-                get_peak_memory()
-            )
+    try:
+        if event == "executing" and data and CURRENT_START_EXECUTION_DATA:
+            if data.get("node") is not None:
+                node_id = data.get("node")
+                CURRENT_START_EXECUTION_DATA["nodes_start_perf_time"][node_id] = (
+                    time.perf_counter()
+                )
+                reset_peak_memory_record()
+                CURRENT_START_EXECUTION_DATA["nodes_start_vram"][node_id] = (
+                    get_peak_memory()
+                )
+    except Exception:
+        getLogger("comfy-deploy").warning(
+            "comfy-deploy - per-node timing start failed; the node runs regardless",
+            exc_info=True,
+        )
 
 
 server.PromptServer.send_sync = swizzle_send_sync
@@ -1544,8 +1497,9 @@ server.PromptServer.send_sync = swizzle_send_sync
 send_json = prompt_server.send_json
 
 
-async def send_json_override(self, event, data, sid=None):
-    # logger.info(f"INTERNAL: event={event}, data={data}, sid={sid}")
+async def send_json_override(self, event, data, sid=None, *args, **kwargs):
+    # `*args, **kwargs`: anything ComfyUI appends to send_json reaches the
+    # original untouched instead of raising TypeError in its publish loop.
     prompt_id = data.get("prompt_id")
 
     target_sid = sid
@@ -1556,7 +1510,9 @@ async def send_json_override(self, event, data, sid=None):
     await asyncio.wait(
         [
             asyncio.create_task(send(event, data, sid=target_sid)),
-            asyncio.create_task(self.send_json_original(event, data, sid)),
+            asyncio.create_task(
+                self.send_json_original(event, data, sid, *args, **kwargs)
+            ),
         ]
     )
 
@@ -2447,14 +2403,15 @@ async def _forward_preview(prompt_id, payload):
         _preview_state["inflight"] = False
 
 
-async def send_bytes_override(self, event, data, sid=None):
+async def send_bytes_override(self, event, data, sid=None, *args, **kwargs):
     """Forward preview frames into the run's event stream, then send as normal.
 
     The original call happens FIRST and unconditionally — anything watching the
     container's own socket keeps working exactly as before, and a failure in
-    our forwarding can never cost ComfyUI its own delivery.
+    our forwarding can never cost ComfyUI its own delivery. `*args, **kwargs`
+    are ComfyUI's, passed through so a parameter it appends cannot raise here.
     """
-    await self.send_bytes_original(event, data, sid)
+    await self.send_bytes_original(event, data, sid, *args, **kwargs)
 
     if not _PREVIEW_FORWARDING or event != BinaryEventTypes.PREVIEW_IMAGE:
         return
