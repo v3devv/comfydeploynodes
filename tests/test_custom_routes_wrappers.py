@@ -175,8 +175,9 @@ def _child(fork_root, mode):
         print(_MARK + json.dumps(results), flush=True)
         return
 
-    if mode == "node-failure":
-        _node_failure_cases(custom_routes, srv, records, results)
+    if mode in ("node-failure", "node-failure-race"):
+        _node_failure_cases(custom_routes, srv, records, results,
+                            race=mode.endswith("-race"))
         print(_MARK + json.dumps(results), flush=True)
         return
 
@@ -409,7 +410,7 @@ def _publish_guard_cases(custom_routes, srv, received, sent_data, fail_original,
     del custom_routes.prompt_metadata["p-7"]
 
 
-def _node_failure_cases(custom_routes, srv, records, results):
+def _node_failure_cases(custom_routes, srv, records, results, race=False):
     """A failed node's reason reaches the engine, then `failed`, both bounded.
 
     The engine fires its terminal webhook on the `failed` status POST, strips
@@ -423,6 +424,10 @@ def _node_failure_cases(custom_routes, srv, records, results):
 
     All of this is awaited inside ComfyUI's single publish loop, so the budgets
     are small here and each call is timed.
+
+    With `race`, only the cases about a stale `Executing <class>` POST run; they
+    share this scaffolding but are a separate claim, so they are a test of their
+    own.
     """
     import asyncio
     import time
@@ -438,13 +443,35 @@ def _node_failure_cases(custom_routes, srv, records, results):
     guard = 5.0
 
     posts = []
-    behave = {"fail": lambda body: False, "hang": lambda body: False}
+    behave = {"fail": lambda body: False, "hang": lambda body: False,
+              "retry": lambda body: False}
+    # What a POST cut mid-flight saw at its await point. The whole bound rests
+    # on the cut reaching the request itself rather than orphaning a task that
+    # keeps posting, and on neither critical POST opting out of the timeout.
+    # `cut_during_run` is that list as it stood while the loop was still
+    # running: `asyncio.run` cancels whatever is left at shutdown, and a cut
+    # that only happens there is not a cut anyone made on purpose.
+    transport = []
+    cut_during_run = []
+    # The back-off a real `async_request_with_retry` sleeps before attempt two.
+    # Only has to outlast the publish loop's own work, not a real second.
+    retry_delay = 0.05
 
     async def fake_request(method, url, disable_timeout=False, token=None, **kw):
         body = kw.get("json")
+        if behave["retry"](body):
+            # A 500, or a ServerDisconnectedError off a stale pooled connection:
+            # `async_request_with_retry` retries after a back-off, so this body
+            # lands LATE. Once, then the attempt succeeds.
+            behave["retry"] = lambda b: False
+            await asyncio.sleep(retry_delay)
         posts.append(body)
         if behave["hang"](body):
-            await asyncio.Event().wait()  # an engine that never answers
+            try:
+                await asyncio.Event().wait()  # an engine that never answers
+            except BaseException as ex:
+                transport.append((kind(body), type(ex).__name__, disable_timeout))
+                raise
         if behave["fail"](body):
             raise RuntimeError("engine said no")
 
@@ -454,7 +481,8 @@ def _node_failure_cases(custom_routes, srv, records, results):
         return ("live" if "live_status" in b else "failed" if b.get("status") == "failed"
                 else "output" if "output_data" in b else "other")
 
-    def run(pid, data, progress=(), fail=lambda body: False, hang=lambda body: False):
+    def run(pid, data, progress=(), fail=lambda body: False, hang=lambda body: False,
+            retry=lambda body: False, executing=None, settle=0.1):
         custom_routes.prompt_metadata[pid] = types.SimpleNamespace(
             workflow_api={str(i): {"class_type": "N", "inputs": {}} for i in range(1, 5)},
             status_endpoint="http://engine.invalid/status", file_upload_endpoint=None,
@@ -464,10 +492,19 @@ def _node_failure_cases(custom_routes, srv, records, results):
         )
         posts.clear()
         records.clear()
-        behave["fail"], behave["hang"] = fail, hang
+        transport.clear()
+        cut_during_run.clear()
+        behave["fail"], behave["hang"], behave["retry"] = fail, hang, retry
         took = {}
 
         async def go():
+            if executing is not None:
+                # A node started, so an `Executing <class>` POST is in flight
+                # when the next node fails, exactly as on a real run.
+                await asyncio.wait_for(
+                    srv.send_json(
+                        "executing", {"node": executing, "prompt_id": pid}, "sid-1"),
+                    guard)
             t0 = time.monotonic()
             await asyncio.wait_for(
                 srv.send_json("execution_error", dict(data, prompt_id=pid), "sid-1"),
@@ -476,7 +513,8 @@ def _node_failure_cases(custom_routes, srv, records, results):
             # What happened BEFORE this point is what the publish loop waited
             # for; then give background work a moment to start.
             took["before"] = [kind(b) for b in posts]
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(settle)
+            cut_during_run[:] = transport
 
         try:
             asyncio.run(go())
@@ -500,6 +538,46 @@ def _node_failure_cases(custom_routes, srv, records, results):
         "current_inputs": {"image": ["INPUT-MARKER"]},
         "current_outputs": [],
     }
+
+    def race_cases():
+        """A stale `Executing <class>` POST must never outlive the reason."""
+        # 10. `live_status` is the ONLY channel the reason travels on, so it must be
+        #     the LAST one written. The `Executing <class>` POST for the node that
+        #     then failed is fired and forgotten, and `async_request_with_retry`
+        #     retries it after a back-off, so it could land after the reason and
+        #     erase it: the run would end `failed` while its status claimed the node
+        #     was executing, with no reason anywhere. Here the node's own POST is
+        #     retried once and so lands late; nothing of it may reach the engine.
+        label = "a stale Executing POST cannot land after the failure reason"
+        reason_text = ("ComfyUI node failed: Node 5 (KSampler): torch.OutOfMemoryError: "
+                       "CUDA out of memory. Tried to allocate 2 GiB")
+        raised, live, failed, order, took, before = run(
+            "p-f9", full, progress=["1"], executing="3", settle=retry_delay * 6,
+            retry=lambda body: str(body.get("live_status", "")).startswith("Executing "))
+        texts = [b["live_status"] for b in live]
+        ok = (raised is None and texts == [reason_text]
+              and order == ["live", "failed", "output"])
+        results[label] = ["ok" if ok else "fail",
+                          f"raised={raised} order={order} texts={texts!r}"]
+
+        # 11. The same, with the stale POST already on the wire rather than in a
+        #     back-off: it must not be left running once the reason is going out.
+        label = "an Executing POST still in flight is abandoned, not left to land"
+        raised, live, failed, order, took, before = run(
+            "p-fa", full, progress=["1"], executing="3", settle=retry_delay * 6,
+            hang=lambda body: str(body.get("live_status", "")).startswith("Executing "))
+        texts = [b["live_status"] for b in live if "Executing " in str(b["live_status"])]
+        cut = [t for t in cut_during_run if t[0] == "live"]
+        ok = (raised is None and len(texts) == 1
+              and cut == [("live", "CancelledError", False)]
+              and [k for k in order if k != "live"] == ["failed", "output"])
+        results[label] = ["ok" if ok else "fail",
+                          f"raised={raised} order={order} cut={cut!r} texts={texts!r}"]
+
+
+    if race:
+        race_cases()
+        return
 
     # 1. The reason goes out first, with progress, then `failed`; the record
     #    follows in the background, after the publish loop is released.
@@ -660,6 +738,12 @@ class CustomRoutesWrappers(unittest.TestCase):
             "a hung reason POST is cut at its budget and failed is still attempted",
             "an engine hung on every POST holds the publish loop for both budgets at most",
             "a hung record POST runs in the background and never blocks",
+        })
+
+    def test_a_stale_progress_post_cannot_erase_the_failure_reason(self):
+        self._check(_run_child("node-failure-race"), {
+            "a stale Executing POST cannot land after the failure reason",
+            "an Executing POST still in flight is abandoned, not left to land",
         })
 
     def test_a_patch_that_fails_to_install_is_logged_and_comfyui_still_starts(self):

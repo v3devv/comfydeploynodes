@@ -1650,6 +1650,40 @@ _NODE_FAILURE_STATUS_BUDGET_S = 60.0
 # mid-flight (asyncio keeps only a weak reference to a running task).
 _node_failure_background = set()
 
+# The `Executing <class>` progress POSTs still in flight, per run. They are
+# fired and forgotten, and `async_request_with_retry` retries a non-200 -- and
+# any ClientError, `ServerDisconnectedError` off a stale pooled connection
+# included, since `force_close` is False -- after a back-off. So the POST for
+# the node that then FAILED can land AFTER the failure reason and overwrite it,
+# and `live_status` is the only channel the reason travels on: the run would
+# end `failed` carrying "Executing <class>" and no reason at all. A transient
+# error is not even needed; on a healthy run the two POSTs are only the failing
+# node's own execution time apart, on two different pooled connections.
+# `_report_node_failure` cancels these before it posts the reason. Cancelling
+# rather than awaiting is deliberate: it abandons the socket at once and leaves
+# both failure budgets exactly as they are.
+_live_status_tasks = {}
+
+
+def _track_live_status(prompt_id, task):
+    tasks = _live_status_tasks.setdefault(prompt_id, set())
+    tasks.add(task)
+
+    def done(finished):
+        tasks.discard(finished)
+        # Only drop the run's entry if it is still this set: `_cancel_live_status`
+        # may already have taken it and a later node started a fresh one.
+        if not tasks and _live_status_tasks.get(prompt_id) is tasks:
+            del _live_status_tasks[prompt_id]
+
+    task.add_done_callback(done)
+
+
+def _cancel_live_status(prompt_id):
+    """Abandon every in-flight `Executing <class>` POST for this run."""
+    for task in _live_status_tasks.pop(prompt_id, ()):
+        task.cancel()
+
 
 def _log_background_failure(prompt_id, task):
     _node_failure_background.discard(task)
@@ -1675,8 +1709,10 @@ async def _report_node_failure(prompt_id, data):
         on the `failed` POST, strips `execution_error` outputs from it, and
         writes `live_status` only when `progress` comes with it, so this has
         to land first, and with progress, or the webhook says "Executing
-        <Node>" and the reason is lost. A failure or timeout is logged and (b)
-        goes regardless.
+        <Node>" and the reason is lost. Any `Executing <class>` POST still in
+        flight for this run is cancelled first, or it could land after this one
+        and erase the reason. A failure or timeout is logged and (b) goes
+        regardless.
     (b) `status: failed`, in its own POST, at most
         `_NODE_FAILURE_STATUS_BUDGET_S`. A timeout is logged at ERROR: the
         engine never heard the run ended, and only its reaper will end it.
@@ -1687,6 +1723,9 @@ async def _report_node_failure(prompt_id, data):
         need not delay (b). A failure is logged by the task's callback.
     """
     log = getLogger("comfy-deploy")
+    # The reason must be the LAST `live_status` written for this run, so nothing
+    # older may still be in flight or waiting on a retry back-off.
+    _cancel_live_status(prompt_id)
     try:
         await asyncio.wait_for(
             update_run_live_status(
@@ -1875,10 +1914,13 @@ async def _handle_send_json(event, data, sid, original):
                     sid=sid,
                 )
             )
-            asyncio.create_task(
-                update_run_live_status(
-                    prompt_id, "Executing " + class_type, calculated_progress
-                )
+            _track_live_status(
+                prompt_id,
+                asyncio.create_task(
+                    update_run_live_status(
+                        prompt_id, "Executing " + class_type, calculated_progress
+                    )
+                ),
             )
 
     if event == "execution_cached" and data.get("nodes") is not None:
