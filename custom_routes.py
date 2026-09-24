@@ -1638,34 +1638,69 @@ def _last_known_progress(prompt_id):
         return 0
 
 
+# How long the publish loop may wait on a failed node's two critical POSTs.
+# `async_request_with_retry` alone can hold one POST for 331 s against an
+# engine that accepts and never answers (5 attempts x 60 s read timeout + 31 s
+# of back-off), and without limit against one that trickles bytes; ComfyUI
+# sends nothing while this waits. These cut it at 20 + 60 s, trickle included.
+_NODE_FAILURE_REASON_BUDGET_S = 20.0
+_NODE_FAILURE_STATUS_BUDGET_S = 60.0
+
+# Background tasks started here, held so they are not garbage-collected
+# mid-flight (asyncio keeps only a weak reference to a running task).
+_node_failure_background = set()
+
+
+def _log_background_failure(prompt_id, task):
+    _node_failure_background.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        getLogger("comfy-deploy").warning(
+            f"comfy-deploy - could not post the failed node's record for run "
+            f"{prompt_id}; the run is already marked failed",
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
+
 async def _report_node_failure(prompt_id, data):
-    """Record a failed node, post its reason, then mark the run failed.
+    """Post a failed node's reason, mark the run failed, then record the error.
 
-    Three POSTs, in this order, each awaited and each isolated from the others:
-    whatever the first two do, the run still ends `failed`.
+    Runs inside ComfyUI's publish loop, so the two POSTs it waits for are each
+    cut at a budget, and the third is not waited for at all:
 
-    1. The raw `execution_error` record, as before (the engine DB keeps it).
-    2. The reason as `live_status` + `progress`. The engine fires its terminal
-       webhook on the `failed` POST, strips `execution_error` outputs from it,
-       and writes `live_status` only when `progress` comes with it — so this
-       has to land first, and with progress, or the webhook says
-       "Executing <Node>" and the reason is lost.
-    3. `status: failed`, in its own POST.
+    (a) The reason as `live_status` + `progress`, at most
+        `_NODE_FAILURE_REASON_BUDGET_S`. The engine fires its terminal webhook
+        on the `failed` POST, strips `execution_error` outputs from it, and
+        writes `live_status` only when `progress` comes with it, so this has
+        to land first, and with progress, or the webhook says "Executing
+        <Node>" and the reason is lost. A failure or timeout is logged and (b)
+        goes regardless.
+    (b) `status: failed`, in its own POST, at most
+        `_NODE_FAILURE_STATUS_BUDGET_S`. A timeout is logged at ERROR: the
+        engine never heard the run ended, and only its reaper will end it.
+    (c) The raw `execution_error` record, LAST, as a tracked background task.
+        It is debug-only: the engine strips it from webhooks and GET /run, and
+        stores a late output whatever the run's status (comfydeploy-studio
+        apps/api/src/api/routes/internal.py, the `output_data` branch), so it
+        need not delay (b). A failure is logged by the task's callback.
     """
     log = getLogger("comfy-deploy")
     try:
-        await update_run_with_output(prompt_id, data)
-    except Exception:
-        log.warning(
-            f"comfy-deploy - could not post the failed node's record for run "
-            f"{prompt_id}; posting its reason and failing the run regardless",
-            exc_info=True,
+        await asyncio.wait_for(
+            update_run_live_status(
+                prompt_id,
+                _node_failure_live_status(data),
+                _last_known_progress(prompt_id),
+            ),
+            timeout=_NODE_FAILURE_REASON_BUDGET_S,
         )
-    try:
-        await update_run_live_status(
-            prompt_id,
-            _node_failure_live_status(data),
-            _last_known_progress(prompt_id),
+    except asyncio.TimeoutError:
+        log.warning(
+            f"comfy-deploy - the failure reason for run {prompt_id} was not "
+            f"accepted within {_NODE_FAILURE_REASON_BUDGET_S:g}s; failing the "
+            "run regardless"
         )
     except Exception:
         log.warning(
@@ -1673,7 +1708,27 @@ async def _report_node_failure(prompt_id, data):
             f"{prompt_id}; failing the run regardless",
             exc_info=True,
         )
-    await update_run(prompt_id, Status.FAILED)
+
+    try:
+        await asyncio.wait_for(
+            update_run(prompt_id, Status.FAILED),
+            timeout=_NODE_FAILURE_STATUS_BUDGET_S,
+        )
+    except asyncio.TimeoutError:
+        log.error(
+            f"comfy-deploy - the engine did not accept status failed for run "
+            f"{prompt_id} within {_NODE_FAILURE_STATUS_BUDGET_S:g}s; the run "
+            "stays open there until its reaper ends it"
+        )
+    except Exception:
+        log.error(
+            f"comfy-deploy - could not post status failed for run {prompt_id}",
+            exc_info=True,
+        )
+
+    task = asyncio.ensure_future(update_run_with_output(prompt_id, data))
+    _node_failure_background.add(task)
+    task.add_done_callback(lambda t: _log_background_failure(prompt_id, t))
 
 
 async def _handle_send_json(event, data, sid, original):

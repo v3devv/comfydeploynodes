@@ -410,31 +410,51 @@ def _publish_guard_cases(custom_routes, srv, received, sent_data, fail_original,
 
 
 def _node_failure_cases(custom_routes, srv, records, results):
-    """A failed node's reason reaches the engine BEFORE the run is marked failed.
+    """A failed node's reason reaches the engine, then `failed`, both bounded.
 
     The engine fires its terminal webhook on the `failed` status POST, strips
     `execution_error` outputs, and writes `live_status` only when `progress`
     comes with it. So the reason travels as `live_status` + `progress` in its
-    own POST, awaited, and `status: failed` follows in a separate POST. Every
-    POST goes through `async_request_with_retry`, which is replaced here by a
-    recorder: the real update_run_with_output, update_run_live_status and
-    update_run build the bodies.
+    own POST, and `status: failed` follows in a separate one. The raw error
+    record is debug-only and goes LAST, in the background. Every POST goes
+    through `async_request_with_retry`, replaced here by a recorder that can
+    also fail or hang forever: the real update_run_with_output,
+    update_run_live_status and update_run build the bodies.
+
+    All of this is awaited inside ComfyUI's single publish loop, so the budgets
+    are small here and each call is timed.
     """
     import asyncio
+    import time
     import types
 
+    reason_budget, status_budget = 0.2, 0.3
+    custom_routes._NODE_FAILURE_REASON_BUDGET_S = reason_budget
+    custom_routes._NODE_FAILURE_STATUS_BUDGET_S = status_budget
+    # Scheduling slack on a loaded machine; far below any real retry chain.
+    slack = 0.5
+    # A version with no budget hangs forever; this guard turns that into a
+    # failed case instead of a hung child.
+    guard = 5.0
+
     posts = []
-    fail_when = {"pred": lambda body: False}
+    behave = {"fail": lambda body: False, "hang": lambda body: False}
 
     async def fake_request(method, url, disable_timeout=False, token=None, **kw):
         body = kw.get("json")
         posts.append(body)
-        if fail_when["pred"](body):
+        if behave["hang"](body):
+            await asyncio.Event().wait()  # an engine that never answers
+        if behave["fail"](body):
             raise RuntimeError("engine said no")
 
     custom_routes.async_request_with_retry = fake_request
 
-    def run(pid, data, progress=(), fail=lambda body: False):
+    def kind(b):
+        return ("live" if "live_status" in b else "failed" if b.get("status") == "failed"
+                else "output" if "output_data" in b else "other")
+
+    def run(pid, data, progress=(), fail=lambda body: False, hang=lambda body: False):
         custom_routes.prompt_metadata[pid] = types.SimpleNamespace(
             workflow_api={str(i): {"class_type": "N", "inputs": {}} for i in range(1, 5)},
             status_endpoint="http://engine.invalid/status", file_upload_endpoint=None,
@@ -444,21 +464,33 @@ def _node_failure_cases(custom_routes, srv, records, results):
         )
         posts.clear()
         records.clear()
-        fail_when["pred"] = fail
+        behave["fail"], behave["hang"] = fail, hang
+        took = {}
+
+        async def go():
+            t0 = time.monotonic()
+            await asyncio.wait_for(
+                srv.send_json("execution_error", dict(data, prompt_id=pid), "sid-1"),
+                guard)
+            took["s"] = time.monotonic() - t0
+            # What happened BEFORE this point is what the publish loop waited
+            # for; then give background work a moment to start.
+            took["before"] = [kind(b) for b in posts]
+            await asyncio.sleep(0.1)
+
         try:
-            asyncio.run(srv.send_json("execution_error", dict(data, prompt_id=pid), "sid-1"))
+            asyncio.run(go())
             raised = None
-        except Exception as ex:
+        except BaseException as ex:
             raised = f"{type(ex).__name__}: {ex}"
-        fail_when["pred"] = lambda body: False
+        behave["fail"] = behave["hang"] = lambda body: False
         live = [b for b in posts if "live_status" in b]
         failed = [b for b in posts if b.get("status") == "failed"]
         # The `ws_event` mirror of the event is a background task of its own
         # and may land anywhere; only the three run-state POSTs are ordered.
-        order = ["live" if "live_status" in b else "failed" if b.get("status") == "failed"
-                 else "output" if "output_data" in b else "other" for b in posts]
-        order = [o for o in order if o != "other"]
-        return raised, live, failed, order
+        order = [k for k in (kind(b) for b in posts) if k != "other"]
+        before = [k for k in took.get("before", []) if k != "other"]
+        return raised, live, failed, order, took.get("s"), before
 
     full = {
         "node_id": "5", "node_type": "KSampler", "executed": ["1", "2"],
@@ -469,17 +501,19 @@ def _node_failure_cases(custom_routes, srv, records, results):
         "current_outputs": [],
     }
 
-    # 1. The reason goes out first, with progress, and `failed` follows it.
-    label = "a failed node posts its reason with progress, then failed, in that order"
-    raised, live, failed, order = run("p-f1", full, progress=["1", "2"])
+    # 1. The reason goes out first, with progress, then `failed`; the record
+    #    follows in the background, after the publish loop is released.
+    label = "a failed node posts its reason with progress, then failed, then the record"
+    raised, live, failed, order, took, before = run("p-f1", full, progress=["1", "2"])
     want = ("ComfyUI node failed: Node 5 (KSampler): torch.OutOfMemoryError: "
             "CUDA out of memory. Tried to allocate 2 GiB")
-    ok = (raised is None and order == ["output", "live", "failed"]
+    ok = (raised is None and order == ["live", "failed", "output"]
+          and before == ["live", "failed"]
           and len(live) == 1 and live[0]["live_status"] == want
           and live[0]["progress"] == 0.5 and "status" not in live[0]
           and len(failed) == 1 and "live_status" not in failed[0])
     results[label] = ["ok" if ok else "fail",
-                      f"raised={raised} order={order} live={live!r}"]
+                      f"raised={raised} order={order} before={before} live={live!r}"]
 
     # 2. The reason carries no traceback and no inputs.
     label = "the reason carries no traceback and no node inputs"
@@ -489,38 +523,72 @@ def _node_failure_cases(custom_routes, srv, records, results):
 
     # 3. The whole string is capped at 1000 characters.
     label = "the reason is capped at 1000 characters"
-    raised, live, failed, order = run("p-f2", dict(full, exception_message="x" * 5000))
+    raised, live, failed, order, took, before = run(
+        "p-f2", dict(full, exception_message="x" * 5000))
     text = live[0]["live_status"] if live else ""
     ok = (raised is None and len(text) == 1000 and text.startswith(
         "ComfyUI node failed: Node 5 (KSampler): torch.OutOfMemoryError: xxx")
-          and order[-1] == "failed")
+          and "failed" in order)
     results[label] = ["ok" if ok else "fail", f"len={len(text)} order={order}"]
 
     # 4. Missing fields render as `?`, never `None`; unknown progress is 0.
     label = "missing fields render as ? and unknown progress as 0"
-    raised, live, failed, order = run("p-f3", {"node_type": None})
+    raised, live, failed, order, took, before = run("p-f3", {"node_type": None})
     text = live[0]["live_status"] if live else ""
     ok = (raised is None and text == "ComfyUI node failed: Node ? (?): ?: ?"
-          and live[0]["progress"] == 0 and order[-1] == "failed")
+          and live[0]["progress"] == 0 and "failed" in order)
     results[label] = ["ok" if ok else "fail", f"text={text!r} live={live!r} order={order}"]
 
     # 5. The reason's POST failing is logged and the run still ends failed.
     label = "a failing reason POST is logged and failed is still posted"
-    raised, live, failed, order = run(
+    raised, live, failed, order, took, before = run(
         "p-f4", full, fail=lambda body: "live_status" in body)
     warned = [t for lvl, t in records if lvl == "WARNING" and "engine said no" in t]
-    ok = (raised is None and order == ["output", "live", "failed"] and len(warned) == 1)
+    ok = (raised is None and order == ["live", "failed", "output"] and len(warned) == 1)
     results[label] = ["ok" if ok else "fail",
                       f"raised={raised} order={order} warned={warned!r}"]
 
-    # 6. So does the raw-record POST failing before it.
-    label = "a failing output POST is logged and the reason and failed still post"
-    raised, live, failed, order = run(
+    # 6. The background record's POST failing is logged, not lost.
+    label = "a failing record POST is logged and the reason and failed still post"
+    raised, live, failed, order, took, before = run(
         "p-f5", full, fail=lambda body: "output_data" in body)
     warned = [t for lvl, t in records if lvl == "WARNING" and "engine said no" in t]
-    ok = (raised is None and order == ["output", "live", "failed"] and len(warned) == 1)
+    ok = (raised is None and order == ["live", "failed", "output"] and len(warned) == 1)
     results[label] = ["ok" if ok else "fail",
                       f"raised={raised} order={order} warned={warned!r}"]
+
+    # 7. An engine that hangs on the reason costs the reason's budget, no more,
+    #    and `failed` is still attempted.
+    label = "a hung reason POST is cut at its budget and failed is still attempted"
+    raised, live, failed, order, took, before = run(
+        "p-f6", full, hang=lambda body: "live_status" in body)
+    warned = [t for lvl, t in records if lvl == "WARNING" and "reason" in t]
+    ok = (raised is None and took is not None and took < reason_budget + slack
+          and before == ["live", "failed"] and len(warned) == 1)
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} took={took} before={before} warned={warned!r}"]
+
+    # 8. An engine that hangs on everything: the publish loop waits at most
+    #    both budgets, and the lost `failed` is logged at ERROR.
+    label = "an engine hung on every POST holds the publish loop for both budgets at most"
+    raised, live, failed, order, took, before = run(
+        "p-f7", full, hang=lambda body: True)
+    errors = [t for lvl, t in records if lvl == "ERROR" and "failed" in t]
+    ok = (raised is None and took is not None
+          and took < reason_budget + status_budget + slack
+          and before == ["live", "failed"] and len(errors) == 1)
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} took={took} before={before} errors={errors!r}"]
+
+    # 9. The record hanging never reaches the publish loop at all: it runs in
+    #    the background after the call has returned.
+    label = "a hung record POST runs in the background and never blocks"
+    raised, live, failed, order, took, before = run(
+        "p-f8", full, hang=lambda body: "output_data" in body)
+    ok = (raised is None and took is not None and took < slack
+          and before == ["live", "failed"] and order == ["live", "failed", "output"])
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} took={took} before={before} order={order}"]
 
 
 def _run_child(mode):
@@ -583,12 +651,15 @@ class CustomRoutesWrappers(unittest.TestCase):
 
     def test_a_failed_node_posts_its_reason_before_the_run_is_marked_failed(self):
         self._check(_run_child("node-failure"), {
-            "a failed node posts its reason with progress, then failed, in that order",
+            "a failed node posts its reason with progress, then failed, then the record",
             "the reason carries no traceback and no node inputs",
             "the reason is capped at 1000 characters",
             "missing fields render as ? and unknown progress as 0",
             "a failing reason POST is logged and failed is still posted",
-            "a failing output POST is logged and the reason and failed still post",
+            "a failing record POST is logged and the reason and failed still post",
+            "a hung reason POST is cut at its budget and failed is still attempted",
+            "an engine hung on every POST holds the publish loop for both budgets at most",
+            "a hung record POST runs in the background and never blocks",
         })
 
     def test_a_patch_that_fails_to_install_is_logged_and_comfyui_still_starts(self):
