@@ -1400,87 +1400,23 @@ def handle_execute(class_type, last_node_id, prompt_id, server, unique_id):
         # print(f"#{unique_id} [{class_type}]: {execution_time:.2f}s - vram {vram_used}b")
 
 
+# Per-node timing: `execution.execute` is wrapped so `handle_execute` runs after
+# each node. The wrapper lives in its own module, importable without ComfyUI, so
+# tests/test_execute_swizzle.py can run it. It forwards whatever ComfyUI passes
+# instead of naming execute()'s parameters: the hand-written list this replaces
+# raised TypeError on ComfyUI 0.36.0+ (12 parameters), inside the prompt worker
+# thread, and every run on the container hung.
 try:
-    origin_execute = execution.execute
-    is_async = asyncio.iscoroutinefunction(origin_execute)
+    from comfydeploy_execute_swizzle import install_execute_swizzle
 
-    if is_async:
-        # Check signature for backward compatibility (v0.3.67 has 10 params, v0.3.68+ has 11)
-        sig = inspect.signature(origin_execute)
-        has_ui_outputs = len(sig.parameters) >= 11
-
-        async def swizzle_execute(
-            server,
-            dynprompt,
-            caches,
-            current_item,
-            extra_data,
-            executed,
-            prompt_id,
-            execution_list,
-            pending_subgraph_results,
-            pending_async_nodes,
-            ui_outputs=None,
-        ):
-            unique_id = current_item
-            class_type = dynprompt.get_node(unique_id)["class_type"]
-            last_node_id = server.last_node_id
-
-            # Build args list - add ui_outputs only for v0.3.68+
-            args = [
-                server,
-                dynprompt,
-                caches,
-                current_item,
-                extra_data,
-                executed,
-                prompt_id,
-                execution_list,
-                pending_subgraph_results,
-                pending_async_nodes,
-            ]
-            if has_ui_outputs:
-                args.append(ui_outputs)
-
-            result = await origin_execute(*args)
-
-            handle_execute(class_type, last_node_id, prompt_id, server, unique_id)
-            return result
-    else:
-        # Sync version for very old ComfyUI versions
-        def swizzle_execute(
-            server,
-            dynprompt,
-            caches,
-            current_item,
-            extra_data,
-            executed,
-            prompt_id,
-            execution_list,
-            pending_subgraph_results,
-        ):
-            unique_id = current_item
-            class_type = dynprompt.get_node(unique_id)["class_type"]
-            last_node_id = server.last_node_id
-
-            result = origin_execute(
-                server,
-                dynprompt,
-                caches,
-                current_item,
-                extra_data,
-                executed,
-                prompt_id,
-                execution_list,
-                pending_subgraph_results,
-            )
-
-            handle_execute(class_type, last_node_id, prompt_id, server, unique_id)
-            return result
-
-    execution.execute = swizzle_execute
+    install_execute_swizzle(execution, handle_execute)
 except Exception:
-    pass
+    # Non-fatal, ComfyUI must still start. Not silent: a patch that failed to
+    # install is otherwise indistinguishable from one that works.
+    getLogger("comfy-deploy").exception(
+        "comfy-deploy - could not install the execute timing patch; "
+        "runs are unaffected, per-node timings will be missing"
+    )
 
 
 def format_table(headers, data):
