@@ -1497,9 +1497,292 @@ server.PromptServer.send_sync = swizzle_send_sync
 send_json = prompt_server.send_json
 
 
+# Distinct failures of our own send_json handling already logged with a
+# traceback. Bounded: reaching the cap starts a fresh window, so a failure that
+# varies per event cannot grow this without limit, and a new DISTINCT failure
+# past the cap is still logged rather than being silenced for good.
+_send_json_failures_logged = set()
+_SEND_JSON_FAILURES_LOGGED_MAX = 64
+
+
+def _log_send_json_failure(event, exc, source="ours"):
+    """One traceback per distinct failure; repeats go to DEBUG.
+
+    A failure here usually repeats on every event of a kind (every `executing`,
+    every progress tick), so logging each one would bury the log. "Distinct"
+    is who failed (`source`: our handling, or ComfyUI's own send) plus the
+    exception type and the line that raised it, never the message: a message
+    carries node and prompt ids and would make every event distinct.
+    """
+    tb = exc.__traceback__
+    while tb is not None and tb.tb_next is not None:
+        tb = tb.tb_next
+    where = (tb.tb_frame.f_code.co_filename, tb.tb_lineno) if tb else ("?", 0)
+    key = (source, type(exc).__name__, where)
+    if source == "ours":
+        what = f"handling of the {event!r} event failed; ComfyUI still sends it"
+    else:
+        what = (f"ComfyUI's own send of the {event!r} event failed; that event "
+                "is lost, the server carries on")
+    log = getLogger("comfy-deploy")
+    if key in _send_json_failures_logged:
+        log.debug(f"comfy-deploy - {what} (again): {exc!r}")
+        return
+    if len(_send_json_failures_logged) >= _SEND_JSON_FAILURES_LOGGED_MAX:
+        # The cap used to LATCH: past it every FURTHER DISTINCT failure -- an
+        # unrelated thing breaking -- dropped to DEBUG for the container's life,
+        # and ComfyUI's default level is INFO, so nobody ever saw it. Start a
+        # fresh window instead: the set stays bounded, and a repeat still costs
+        # one WARNING per window rather than one per event.
+        _send_json_failures_logged.clear()
+    _send_json_failures_logged.add(key)
+    log.warning(
+        f"comfy-deploy - {what}. Later failures at this same place are logged "
+        "at DEBUG only.",
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+
+
 async def send_json_override(self, event, data, sid=None, *args, **kwargs):
-    # `*args, **kwargs`: anything ComfyUI appends to send_json reaches the
-    # original untouched instead of raising TypeError in its publish loop.
+    """Mirror ComfyUI's event to our sockets and track the run, then send it.
+
+    This runs inside ComfyUI's single `publish_loop`, which sits in the
+    `asyncio.gather` in ComfyUI's main.py: anything raised here ends the WHOLE
+    server ("Exiting the application"), and with it every run on the
+    container. So no failure leaves here: not our handling's, and not ComfyUI's
+    own send's either, which the old `asyncio.wait` never let out and which
+    costs one event where a raise would cost the server. Both are logged, once
+    per distinct failure. ComfyUI's own send is started first and awaited
+    last, with the arguments it was given, whatever our handling did.
+
+    Cancellation (and any BaseException that is not an Exception) DOES
+    propagate: it is how shutdown stops the loop, not a failure.
+
+    `*args, **kwargs`: anything ComfyUI appends to send_json reaches the
+    original untouched instead of raising TypeError in its publish loop.
+    """
+    if not isinstance(data, dict):
+        # ComfyUI only sends dicts here, but any custom node may call
+        # `send_sync("x", "a string")` or pass a list. There is no prompt id to
+        # track, so it goes straight through.
+        try:
+            await self.send_json_original(event, data, sid, *args, **kwargs)
+        except Exception as exc:
+            _log_send_json_failure(event, exc, source="comfyui")
+        return
+
+    original = asyncio.ensure_future(
+        self.send_json_original(event, data, sid, *args, **kwargs)
+    )
+    try:
+        await _handle_send_json(event, data, sid, original)
+    except Exception as exc:
+        _log_send_json_failure(event, exc)
+    try:
+        await original
+    except Exception as exc:
+        _log_send_json_failure(event, exc, source="comfyui")
+
+
+def _workflow_node_id(wf_api, node):
+    """The submitted workflow's key for `node`, or None.
+
+    A node created by a custom node's graph EXPANSION is named
+    "<parent>.<call>.<graph>.<id>" by ComfyUI (GraphBuilder.alloc_prefix), and
+    expansions nest, so "23.0.0.1.2.0.3" is possible. None of those is a key of
+    the submitted workflow; the part before the first dot is the real node that
+    expanded, which is also what ComfyUI displays for it.
+    """
+    node = str(node)
+    if node in wf_api:
+        return node
+    if "." in node:
+        base = node.split(".")[0]
+        if base in wf_api:
+            return base
+    return None
+
+
+# Frozen contract with the engine: a failure reason travels in `live_status`.
+# The engine's own prefixes are "ComfyUI worker crashed:" and "Reaped".
+_NODE_FAILED_PREFIX = "ComfyUI node failed: "
+_LIVE_STATUS_MAX = 1000
+
+
+def _node_failure_live_status(data):
+    """`ComfyUI node failed: Node <id> (<type>): <exc type>: <exc message>`.
+
+    From ComfyUI's `execution_error` payload. Never the traceback or the node's
+    inputs: this string is shown to whoever ran the workflow. A missing field
+    is `?`, never `None`. Whitespace runs, newlines included, collapse to one
+    space so the status stays on one line; the whole string is capped.
+    """
+
+    def field(key):
+        value = data.get(key)
+        if value is None:
+            return "?"
+        text = " ".join(str(value).split())
+        return text or "?"
+
+    text = (
+        f"{_NODE_FAILED_PREFIX}Node {field('node_id')} ({field('node_type')}): "
+        f"{field('exception_type')}: {field('exception_message')}"
+    )
+    return text[:_LIVE_STATUS_MAX]
+
+
+def _last_known_progress(prompt_id):
+    """The run's progress as last reported by `executing`, or 0."""
+    try:
+        meta = prompt_metadata[prompt_id]
+        total = len(meta.workflow_api)
+        if not total:
+            return 0
+        return min(round(len(meta.progress) / total, 2), 1)
+    except Exception:
+        return 0
+
+
+# How long the publish loop may wait on a failed node's two critical POSTs.
+# `async_request_with_retry` alone can hold one POST for 331 s against an
+# engine that accepts and never answers (5 attempts x 60 s read timeout + 31 s
+# of back-off), and without limit against one that trickles bytes; ComfyUI
+# sends nothing while this waits. These cut it at 20 + 60 s, trickle included.
+_NODE_FAILURE_REASON_BUDGET_S = 20.0
+_NODE_FAILURE_STATUS_BUDGET_S = 60.0
+
+# Background tasks started here, held so they are not garbage-collected
+# mid-flight (asyncio keeps only a weak reference to a running task).
+_node_failure_background = set()
+
+# The `Executing <class>` progress POSTs still in flight, per run. They are
+# fired and forgotten, and `async_request_with_retry` retries a non-200 -- and
+# any ClientError, `ServerDisconnectedError` off a stale pooled connection
+# included, since `force_close` is False -- after a back-off. So the POST for
+# the node that then FAILED can land AFTER the failure reason and overwrite it,
+# and `live_status` is the only channel the reason travels on: the run would
+# end `failed` carrying "Executing <class>" and no reason at all. A transient
+# error is not even needed; on a healthy run the two POSTs are only the failing
+# node's own execution time apart, on two different pooled connections.
+# `_report_node_failure` cancels these before it posts the reason. Cancelling
+# rather than awaiting is deliberate: it abandons the socket at once and leaves
+# both failure budgets exactly as they are.
+_live_status_tasks = {}
+
+
+def _track_live_status(prompt_id, task):
+    tasks = _live_status_tasks.setdefault(prompt_id, set())
+    tasks.add(task)
+
+    def done(finished):
+        tasks.discard(finished)
+        # Only drop the run's entry if it is still this set: `_cancel_live_status`
+        # may already have taken it and a later node started a fresh one.
+        if not tasks and _live_status_tasks.get(prompt_id) is tasks:
+            del _live_status_tasks[prompt_id]
+
+    task.add_done_callback(done)
+
+
+def _cancel_live_status(prompt_id):
+    """Abandon every in-flight `Executing <class>` POST for this run."""
+    for task in _live_status_tasks.pop(prompt_id, ()):
+        task.cancel()
+
+
+def _log_background_failure(prompt_id, task):
+    _node_failure_background.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        getLogger("comfy-deploy").warning(
+            f"comfy-deploy - could not post the failed node's record for run "
+            f"{prompt_id}; the run is already marked failed",
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
+
+async def _report_node_failure(prompt_id, data):
+    """Post a failed node's reason, mark the run failed, then record the error.
+
+    Runs inside ComfyUI's publish loop, so the two POSTs it waits for are each
+    cut at a budget, and the third is not waited for at all:
+
+    (a) The reason as `live_status` + `progress`, at most
+        `_NODE_FAILURE_REASON_BUDGET_S`. The engine fires its terminal webhook
+        on the `failed` POST, strips `execution_error` outputs from it, and
+        writes `live_status` only when `progress` comes with it, so this has
+        to land first, and with progress, or the webhook says "Executing
+        <Node>" and the reason is lost. Any `Executing <class>` POST still in
+        flight for this run is cancelled first, or it could land after this one
+        and erase the reason. A failure or timeout is logged and (b) goes
+        regardless.
+    (b) `status: failed`, in its own POST, at most
+        `_NODE_FAILURE_STATUS_BUDGET_S`. A timeout is logged at ERROR: the
+        engine never heard the run ended, and only its reaper will end it.
+    (c) The raw `execution_error` record, LAST, as a tracked background task.
+        It is debug-only: the engine strips it from webhooks and GET /run, and
+        stores a late output whatever the run's status (comfydeploy-studio
+        apps/api/src/api/routes/internal.py, the `output_data` branch), so it
+        need not delay (b). A failure is logged by the task's callback.
+    """
+    log = getLogger("comfy-deploy")
+    # The reason must be the LAST `live_status` written for this run, so nothing
+    # older may still be in flight or waiting on a retry back-off.
+    _cancel_live_status(prompt_id)
+    try:
+        await asyncio.wait_for(
+            update_run_live_status(
+                prompt_id,
+                _node_failure_live_status(data),
+                _last_known_progress(prompt_id),
+            ),
+            timeout=_NODE_FAILURE_REASON_BUDGET_S,
+        )
+    except asyncio.TimeoutError:
+        log.warning(
+            f"comfy-deploy - the failure reason for run {prompt_id} was not "
+            f"accepted within {_NODE_FAILURE_REASON_BUDGET_S:g}s; failing the "
+            "run regardless"
+        )
+    except Exception:
+        log.warning(
+            f"comfy-deploy - could not post the failure reason for run "
+            f"{prompt_id}; failing the run regardless",
+            exc_info=True,
+        )
+
+    try:
+        await asyncio.wait_for(
+            update_run(prompt_id, Status.FAILED),
+            timeout=_NODE_FAILURE_STATUS_BUDGET_S,
+        )
+    except asyncio.TimeoutError:
+        log.error(
+            f"comfy-deploy - the engine did not accept status failed for run "
+            f"{prompt_id} within {_NODE_FAILURE_STATUS_BUDGET_S:g}s; the run "
+            "stays open there until its reaper ends it"
+        )
+    except Exception:
+        log.error(
+            f"comfy-deploy - could not post status failed for run {prompt_id}",
+            exc_info=True,
+        )
+
+    task = asyncio.ensure_future(update_run_with_output(prompt_id, data))
+    _node_failure_background.add(task)
+    task.add_done_callback(lambda t: _log_background_failure(prompt_id, t))
+
+
+async def _handle_send_json(event, data, sid, original):
+    """Everything send_json_override does besides ComfyUI's own send.
+
+    `original` is ComfyUI's send, already running: it is waited on alongside
+    the mirror to our sockets before any run tracking, as it always was. A
+    `return` here ends only our handling; the caller still awaits `original`.
+    """
     prompt_id = data.get("prompt_id")
 
     target_sid = sid
@@ -1510,9 +1793,7 @@ async def send_json_override(self, event, data, sid=None, *args, **kwargs):
     await asyncio.wait(
         [
             asyncio.create_task(send(event, data, sid=target_sid)),
-            asyncio.create_task(
-                self.send_json_original(event, data, sid, *args, **kwargs)
-            ),
+            original,
         ]
     )
 
@@ -1608,13 +1889,10 @@ async def send_json_override(self, event, data, sid=None, *args, **kwargs):
             wf_api = prompt_metadata[prompt_id].workflow_api
 
             # Normalize dotted display ids like "23.0.0.1" to base "23"
-            if node not in wf_api and "." in node:
-                base = node.split(".")[0]
-                if base in wf_api:
-                    node = base
+            node = _workflow_node_id(wf_api, raw_node)
 
             # If still unknown, skip safely
-            if node not in wf_api:
+            if node is None:
                 logger.info(f"Skipping unknown node id in 'executing': {raw_node}")
                 return
 
@@ -1642,10 +1920,13 @@ async def send_json_override(self, event, data, sid=None, *args, **kwargs):
                     sid=sid,
                 )
             )
-            asyncio.create_task(
-                update_run_live_status(
-                    prompt_id, "Executing " + class_type, calculated_progress
-                )
+            _track_live_status(
+                prompt_id,
+                asyncio.create_task(
+                    update_run_live_status(
+                        prompt_id, "Executing " + class_type, calculated_progress
+                    )
+                ),
             )
 
     if event == "execution_cached" and data.get("nodes") is not None:
@@ -1659,16 +1940,19 @@ async def send_json_override(self, event, data, sid=None, *args, **kwargs):
             # prompt_metadata[prompt_id]["progress"].update(data.get('nodes'))
 
     if event == "execution_error":
-        # Careful this might not be fully awaited.
-        await update_run_with_output(prompt_id, data)
-        await update_run(prompt_id, Status.FAILED)
-        # await update_run_with_output(prompt_id, data)
+        await _report_node_failure(prompt_id, data)
 
     if event == "executed" and "node" in data and "output" in data:
         node_meta = None
         if prompt_id in prompt_metadata:
             node = data.get("node")
-            class_type = prompt_metadata[prompt_id].workflow_api[node]["class_type"]
+            # An expanded node's id is not a workflow key; indexing with it
+            # raised KeyError and lost the node's output. Its class is taken
+            # from the real node that expanded, but the upload keeps the
+            # node's OWN id so two expanded outputs never share one slot.
+            wf_api = prompt_metadata[prompt_id].workflow_api
+            wf_node = _workflow_node_id(wf_api, node)
+            class_type = wf_api[wf_node]["class_type"] if wf_node is not None else None
             node_meta = {
                 "node_id": node,
                 "node_class": class_type,
