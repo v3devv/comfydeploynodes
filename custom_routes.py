@@ -481,18 +481,32 @@ def _log_queue_note_failure(prompt_id, task):
         )
 
 
+async def _record_then_fail(prompt_id, record, gpu_event_id=None):
+    """Record why a run never started, then mark it failed.
+
+    FAILED goes out even when the record POST raises, as it does when the
+    engine's update-run answers 5xx on every retry. Nothing else ends a run
+    that never reached ComfyUI's queue, so without it the run sat in "started"
+    until the engine's reaper marked it timed out. The record's exception
+    still propagates, after FAILED.
+    """
+    try:
+        await update_run_with_output(prompt_id, record, gpu_event_id=gpu_event_id)
+    finally:
+        await update_run(prompt_id, Status.FAILED)
+
+
 async def _settle_queue_outcome(prompt_id, res, gpu_event_id=None):
     """Record what post_prompt returned on the run. Returns the HTTP status."""
     status, queued = _queue_outcome(res)
     if not queued:
         # Refused: nothing is on ComfyUI's queue, so nothing will ever end
         # this run but us.
-        await update_run_with_output(
+        await _record_then_fail(
             prompt_id,
             {"error": dict(res) if isinstance(res, dict) else res},
             gpu_event_id=gpu_event_id,
         )
-        await update_run(prompt_id, Status.FAILED)
     elif res.get("node_errors"):
         # Queued with outputs dropped. Recorded so the user can see which
         # outputs were ignored, and NOT a failure: the run goes on and ends
@@ -858,13 +872,12 @@ async def comfy_deploy_run(request):
         stack_trace = traceback.format_exc().strip()
         logger.info(f"error: {error_type}, {e}")
         logger.info(f"stack trace: {stack_trace_short}")
-        await update_run_with_output(
+        # When there are critical errors, the prompt is actually not run
+        await _record_then_fail(
             prompt_id,
             {"error": {"error_type": error_type, "stack_trace": stack_trace}},
             gpu_event_id=gpu_event_id,
         )
-        # When there are critical errors, the prompt is actually not run
-        await update_run(prompt_id, Status.FAILED)
         return web.Response(
             status=500, reason=f"{error_type}: {e}, {stack_trace_short}"
         )
@@ -923,11 +936,12 @@ async def stream_prompt(data, token):
         stack_trace = traceback.format_exc().strip()
         logger.info(f"error: {error_type}, {e}")
         logger.info(f"stack trace: {stack_trace_short}")
-        await update_run_with_output(
-            prompt_id, {"error": {"error_type": error_type, "stack_trace": stack_trace}}
-        )
         # When there are critical errors, the prompt is actually not run
-        await update_run(prompt_id, Status.FAILED)
+        await _record_then_fail(
+            prompt_id,
+            {"error": {"error_type": error_type, "stack_trace": stack_trace}},
+            gpu_event_id=gpu_event_id,
+        )
         # `res` was never assigned. Falling through raised UnboundLocalError
         # in place of this error.
         return {

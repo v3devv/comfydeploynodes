@@ -1100,6 +1100,48 @@ def _queue_outcome_cases(custom_routes, srv, execution, results, stream=False):
     results[label] = ["ok" if ok else "fail",
                       f"hits={hits!r} lost={lost()!r} records={records!r}"]
 
+    # A refused run is ended by nobody but this node: its FAILED must go out
+    # even when the engine refuses the record POSTed before it (update-run 5xx
+    # on every retry). Otherwise the run sits in "started" until the engine's
+    # reaper marks it timed out, which is the wrong status.
+    def kinds():
+        return [("output" if "output_data" in b else "failed")
+                for b in posts if isinstance(b, dict)
+                and ("output_data" in b or b.get("status") == "failed")]
+
+    def record_post(b):
+        return isinstance(b, dict) and "output_data" in b
+
+    async def explode_validate(prompt):
+        raise RuntimeError("validate exploded")
+
+    # 16. Both POSTs succeed: the record first, then failed.
+    label = f"{route}: a refused prompt posts its record, then failed"
+    raised, resp, failed, outputs, state = run(
+        "p-n0" + route[:1], (False, refused, [], refused_nodes))
+    ok = raised is None and kinds() == ["output", "failed"] and state == "failed"
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} order={kinds()} state={state}"]
+
+    # 17. The record POST fails: failed still goes out, after it, and the
+    #     record's failure is not swallowed.
+    label = f"{route}: a refused prompt whose record POST fails is still failed"
+    raised, resp, failed, outputs, state = run(
+        "p-n1" + route[:1], (False, refused, [], refused_nodes), fail=record_post)
+    ok = (kinds() == ["output", "failed"] and len(failed) == 1
+          and state == "failed" and "engine said no" in str(raised))
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} order={kinds()} failed={failed!r} state={state}"]
+
+    # 18. The same when post_prompt itself raised.
+    label = f"{route}: post_prompt raising with a failing record POST still fails the run"
+    raised, resp, failed, outputs, state = run(
+        "p-n2" + route[:1], post_prompt=explode_validate, fail=record_post)
+    ok = (kinds() == ["output", "failed"] and len(failed) == 1
+          and state == "failed" and "engine said no" in str(raised))
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} order={kinds()} failed={failed!r} state={state}"]
+
     if stream:
         # 14. Queued with per-output errors through the stream: not failed.
         label = "stream_prompt: a prompt queued with per-output node_errors is not failed"
@@ -1221,6 +1263,9 @@ class CustomRoutesWrappers(unittest.TestCase):
             "the run route: a refused prompt's reason and node_errors are logged",
             "the run route: a refused prompt with no node_errors is failed and not queued",
             "the run route: a refused prompt with no node_errors has its reason logged",
+            "the run route: a refused prompt posts its record, then failed",
+            "the run route: a refused prompt whose record POST fails is still failed",
+            "the run route: post_prompt raising with a failing record POST still fails the run",
         })
 
     def test_the_streaming_run_fails_a_refused_prompt_and_only_that(self):
@@ -1231,6 +1276,9 @@ class CustomRoutesWrappers(unittest.TestCase):
             "stream_prompt: a refused prompt with no node_errors has its reason logged",
             "stream_prompt: a prompt queued with per-output node_errors is not failed",
             "stream_prompt: post_prompt raising fails the run and returns an error",
+            "stream_prompt: a refused prompt posts its record, then failed",
+            "stream_prompt: a refused prompt whose record POST fails is still failed",
+            "stream_prompt: post_prompt raising with a failing record POST still fails the run",
         })
 
     def test_a_patch_that_fails_to_install_is_logged_and_comfyui_still_starts(self):
