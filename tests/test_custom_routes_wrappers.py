@@ -955,8 +955,8 @@ def _queue_outcome_cases(custom_routes, srv, execution, results, stream=False):
         except Exception as ex:
             results[label] = ["fail", f"raised {type(ex).__name__}: {ex}"]
 
-        # 4. ...and the dropped outputs are named in the log, without the
-        #    submitted values.
+        # 4. ...and the dropped outputs are named in the log, without
+        #    `extra_info` or the prompt.
         label = "the outputs a queued prompt dropped are logged by node and reason"
         run(pid + "-log", (True, None, ["9"], dropped))
         hits = [t for t in logged()
@@ -1071,7 +1071,7 @@ def _queue_outcome_cases(custom_routes, srv, execution, results, stream=False):
                       f"raised={raised} resp={resp!r} queued={len(queued)} "
                       f"failed={failed!r} outputs={outputs!r} state={state}"]
 
-    # 11. ...and its reason and node_errors are logged, without the values.
+    # 11. ...and its reason and node_errors are logged, without `extra_info` or the prompt.
     label = f"{route}: a refused prompt's reason and node_errors are logged"
     hits = [t for t in logged()
             if "invalid prompt" in t and "Prompt outputs failed validation" in t

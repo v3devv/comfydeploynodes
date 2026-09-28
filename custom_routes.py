@@ -400,9 +400,14 @@ def _describe_prompt_errors(error, node_errors, limit=_PROMPT_ERRORS_LOG_MAX):
     """Why validation refused a prompt or dropped outputs, as one bounded line.
 
     Carries each error's message and details, and each failing node's id and
-    class. That is the text ComfyUI's validate_prompt logs itself. It never
-    carries `extra_info`, which holds `received_value` and `input_config`, the
-    submitted values. It never carries the prompt either.
+    class. That is the same text ComfyUI's validate_prompt logs itself at
+    ERROR, and like that log it CAN carry submitted values. `details` quotes
+    the value it rejected, as in "seed, randomize, invalid literal for int()"
+    or "preset: 1 not in [...]".
+
+    What it leaves out is only the rest: each error's `extra_info` dict
+    (`received_value`, `input_config`, which can be a full option list), every
+    input that did not fail, and the prompt as a whole.
 
     Never raises: it runs after the prompt is already on ComfyUI's queue, where
     an exception would turn a queued run into a failed one.
