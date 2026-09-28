@@ -181,6 +181,12 @@ def _child(fork_root, mode):
         print(_MARK + json.dumps(results), flush=True)
         return
 
+    if mode in ("queue-outcome", "queue-outcome-stream"):
+        _queue_outcome_cases(custom_routes, srv, execution, results,
+                             stream=mode.endswith("-stream"))
+        print(_MARK + json.dumps(results), flush=True)
+        return
+
     def case(label, fn, expect):
         received.clear()
         try:
@@ -720,6 +726,447 @@ def _node_failure_cases(custom_routes, srv, records, results, race=False):
                       f"raised={raised} took={took} before={before} order={order}"]
 
 
+def _queue_outcome_cases(custom_routes, srv, execution, results, stream=False):
+    """What a queue request answers, and whether the run is failed.
+
+    Covers every shape `post_prompt` returns, and its raising.
+
+    ComfyUI's own POST /prompt (server.py `post_prompt`, the same at both engine
+    pins, 094306b6 and ee71d5c4):
+
+        if valid[0]:
+            ... self.prompt_queue.put(...)
+            response = {"prompt_id": prompt_id, "number": number, "node_errors": valid[3]}
+            return web.json_response(response)
+        else:
+            logging.warning("invalid prompt: {}".format(valid[1]))
+            return web.json_response({"error": valid[1], "node_errors": valid[3]}, status=400)
+
+    `validate_prompt` returns (True, None, good_outputs, node_errors) when at
+    least one output validated; node_errors then names the outputs it DROPPED
+    ("Output will be ignored"), and the rest of the graph runs. It returns
+    (False, error, [], {}) or (False, error, [], node_errors) when it refused
+    the prompt. The engine's runner fails the run on any non-200, so answering
+    400 to the first shape failed runs that ComfyUI went on to finish: run
+    201e2fcb was failed at 05:03:02Z and reached execution_success at 05:04:01Z.
+
+    `stream` runs the same shapes through `stream_prompt`, which backs
+    /comfyui-deploy/run/streaming. Its caller waits for a terminal status event,
+    so a refused prompt that is never marked failed holds the stream open.
+    """
+    import asyncio
+    import logging
+    import types
+
+    # ComfyUI runs with stdlib handlers. A call whose arguments do not fit its
+    # format string never raises into the caller; the line is simply lost.
+    # This capture does the same, and records the loss so a case can see it.
+    records = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            try:
+                text = record.getMessage()
+            except Exception as ex:
+                records.append(("LOGGING-ERROR",
+                                f"{record.msg!r}: {type(ex).__name__}: {ex}"))
+                return
+            records.append((record.levelname, text))
+
+    lg = logging.getLogger("comfy-deploy")
+    for h in list(lg.handlers):
+        lg.removeHandler(h)
+    lg.addHandler(Capture())
+
+    posts = []
+    # An engine that answers the record POST with an error, or never answers it.
+    behave = {"fail": lambda body: False, "hang": lambda body: False}
+
+    async def fake_request(method, url, disable_timeout=False, token=None, **kw):
+        body = kw.get("json")
+        posts.append(body)
+        if behave["hang"](body):
+            await asyncio.Event().wait()
+        if behave["fail"](body):
+            raise RuntimeError("engine said no")
+
+    custom_routes.async_request_with_retry = fake_request
+    custom_routes.web = types.SimpleNamespace(
+        json_response=lambda body, status=200, **kw: ("json", status, body),
+        Response=lambda status=200, reason=None, **kw: ("plain", status, reason),
+    )
+
+    queued = []
+    srv.prompt_queue = types.SimpleNamespace(put=lambda item: queued.append(item))
+    srv.trigger_on_prompt = lambda j: j
+    verdict = {"v": None}
+
+    async def validate_prompt(prompt_id, prompt, partial_execution_targets=None):
+        return verdict["v"]
+
+    execution.validate_prompt = validate_prompt
+
+    class Request:
+        def __init__(self, body):
+            self._body = body
+            self.headers = {"Authorization": "Bearer tok-1"}
+
+        async def json(self):
+            return self._body
+
+    def body(pid):
+        return {
+            "prompt_id": pid,
+            "workflow_api_raw": {
+                "9": {"class_type": "SaveImage",
+                      "inputs": {"images": ["8", 0], "filename_prefix": "PAYLOAD-MARKER"}},
+                "10": {"class_type": "PreviewImage", "inputs": {}},
+            },
+            "workflow": None,
+            "inputs": None,
+            "status_endpoint": "http://engine.invalid/status",
+            "file_upload_endpoint": None,
+            "gpu_event_id": None,
+        }
+
+    real_post_prompt = custom_routes.post_prompt
+    # A version with no bound on the answer hangs forever; this turns that into
+    # a failed case instead of a hung child.
+    guard = 5.0
+    took = {}
+
+    def run(pid, v=None, post_prompt=None, fail=lambda body: False,
+            hang=lambda body: False):
+        verdict["v"] = v
+        posts.clear()
+        queued.clear()
+        records.clear()
+        took.clear()
+        behave["fail"], behave["hang"] = fail, hang
+        if post_prompt is not None:
+            custom_routes.post_prompt = post_prompt
+
+        async def go():
+            import time
+            t0 = time.monotonic()
+            if stream:
+                call = custom_routes.stream_prompt(body(pid), "tok-1")
+            else:
+                call = custom_routes.comfy_deploy_run(Request(body(pid)))
+            answer = await asyncio.wait_for(call, guard)
+            took["s"] = time.monotonic() - t0
+            # Work the answer does not wait for gets a moment to land. Anything
+            # still pending after it is cancelled when the loop shuts down.
+            await asyncio.sleep(0.1)
+            return answer
+
+        try:
+            resp = asyncio.run(go())
+            raised = None
+        except BaseException as ex:
+            resp, raised = None, f"{type(ex).__name__}: {ex}"
+        finally:
+            custom_routes.post_prompt = real_post_prompt
+            behave["fail"] = behave["hang"] = lambda body: False
+        failed = [b for b in posts if isinstance(b, dict) and b.get("status") == "failed"]
+        outputs = [b["output_data"] for b in posts
+                   if isinstance(b, dict) and "output_data" in b]
+        meta = custom_routes.prompt_metadata.get(pid)
+        state = getattr(getattr(meta, "status", None), "value", None)
+        return raised, resp, failed, outputs, state
+
+    def status_of(resp):
+        # comfy_deploy_run answers an HTTP response; stream_prompt returns the
+        # dict it streams as its first event.
+        return resp[1] if isinstance(resp, tuple) else None
+
+    def body_of(resp):
+        if isinstance(resp, tuple):
+            return resp[2] if resp[0] == "json" else None
+        return resp
+
+    def logged():
+        return [t for lvl, t in records if lvl in ("WARNING", "ERROR", "INFO")]
+
+    def leaks():
+        return [t for _, t in records
+                if "EXTRA-INFO-MARKER" in t or "PAYLOAD-MARKER" in t]
+
+    def lost():
+        return [t for lvl, t in records if lvl == "LOGGING-ERROR"]
+
+    # validate_prompt's per-output error: an unconnected PreviewImage. The
+    # rest of the graph (SaveImage 9) is fine and runs.
+    dropped = {"10": {
+        "errors": [{"type": "required_input_missing",
+                    "message": "Required input is missing", "details": "images",
+                    "extra_info": {"input_name": "images",
+                                   "received_value": "EXTRA-INFO-MARKER"}}],
+        "dependent_outputs": ["10"], "class_type": "PreviewImage"}}
+    # Cause 2's refusal: the container's schema wants inputs the editor never sent.
+    refused_nodes = {"31": {
+        "errors": [
+            {"type": "required_input_missing", "message": "Required input is missing",
+             "details": "preset",
+             "extra_info": {"input_name": "preset", "input_config": "EXTRA-INFO-MARKER"}},
+            {"type": "required_input_missing", "message": "Required input is missing",
+             "details": "renormalize", "extra_info": {"input_name": "renormalize"}}],
+        "dependent_outputs": ["9"], "class_type": "ConditioningKrea2Rebalance"}}
+    refused = {"type": "prompt_outputs_failed_validation",
+               "message": "Prompt outputs failed validation",
+               "details": "Required input is missing: preset\n"
+                          "Required input is missing: renormalize",
+               "extra_info": {"EXTRA-INFO-MARKER": 1}}
+    # Cause 6's refusal: validate_prompt stops before any node is checked and
+    # returns NO node_errors at all.
+    no_type = {"type": "invalid_prompt",
+               "message": "Cannot execute because a node is missing the class_type property.",
+               "details": "Node ID '#95'", "extra_info": {}}
+
+    route = "stream_prompt" if stream else "the run route"
+
+    if not stream:
+        # 1. Queued with per-output errors: 200, and the run is not failed.
+        label = "a prompt queued with per-output node_errors answers 200 and is not failed"
+        pid = "p-q1"
+        raised, resp, failed, outputs, state = run(pid, (True, None, ["9"], dropped))
+        answer = body_of(resp) or {}
+        ok = (raised is None and status_of(resp) == 200
+              and answer.get("prompt_id") == pid and answer.get("node_errors") == dropped
+              and len(queued) == 1 and failed == [] and state != "failed")
+        results[label] = ["ok" if ok else "fail",
+                          f"raised={raised} resp={resp!r} queued={len(queued)} "
+                          f"failed={failed!r} state={state}"]
+
+        # 2. ...and the ignored outputs are still recorded on the run.
+        label = "the outputs validation dropped are still recorded on the run"
+        recorded = [o for o in outputs
+                    if isinstance(o, dict) and isinstance(o.get("error"), dict)
+                    and o["error"].get("node_errors") == dropped]
+        results[label] = ["ok" if len(recorded) == 1 else "fail", f"outputs={outputs!r}"]
+
+        # 3. ...and ComfyUI's own success still lands on it afterwards.
+        label = "the queued run's own success is posted after it"
+        posts.clear()
+        try:
+            asyncio.run(custom_routes.update_run(pid, custom_routes.Status.SUCCESS))
+            done = [b for b in posts if isinstance(b, dict) and b.get("status") == "success"]
+            results[label] = ["ok" if len(done) == 1 else "fail", f"posts={posts!r}"]
+        except Exception as ex:
+            results[label] = ["fail", f"raised {type(ex).__name__}: {ex}"]
+
+        # 4. ...and the dropped outputs are named in the log, without
+        #    `extra_info` or the prompt.
+        label = "the outputs a queued prompt dropped are logged by node and reason"
+        run(pid + "-log", (True, None, ["9"], dropped))
+        hits = [t for t in logged()
+                if "10" in t and "PreviewImage" in t
+                and "Required input is missing" in t and "images" in t]
+        ok = len(hits) == 1 and not leaks() and not lost()
+        results[label] = ["ok" if ok else "fail",
+                          f"hits={hits!r} leaks={leaks()!r} lost={lost()!r} "
+                          f"records={records!r}"]
+
+        # 4b. The engine refusing that record must not turn a queued run into
+        #     a failed one. The engine's update-run did answer 500 at 05:38Z
+        #     (D6), beside three runs of exactly this shape.
+        label = "a record POST that fails leaves the queued run at 200 and is logged"
+        raised, resp, failed, outputs, state = run(
+            "p-q4b", (True, None, ["9"], dropped),
+            fail=lambda b: isinstance(b, dict) and "output_data" in b)
+        warned = [t for lvl, t in records
+                  if lvl == "WARNING" and "engine said no" in t and "p-q4b" in t]
+        ok = (raised is None and status_of(resp) == 200 and len(queued) == 1
+              and len(outputs) == 1 and failed == [] and state != "failed"
+              and len(warned) == 1)
+        results[label] = ["ok" if ok else "fail",
+                          f"raised={raised} resp={resp!r} failed={failed!r} "
+                          f"state={state} warned={warned!r} records={records!r}"]
+
+        # 4c. ...and an engine that never answers it must not hold the 200:
+        #     the runner gives up on the queue call after 60 s and fails the run.
+        label = "a record POST that hangs does not hold the queued run's 200"
+        raised, resp, failed, outputs, state = run(
+            "p-q4c", (True, None, ["9"], dropped),
+            hang=lambda b: isinstance(b, dict) and "output_data" in b)
+        ok = (raised is None and status_of(resp) == 200 and took.get("s", 99) < 0.5
+              and failed == [] and state != "failed")
+        results[label] = ["ok" if ok else "fail",
+                          f"raised={raised} took={took.get('s')} resp={resp!r} "
+                          f"failed={failed!r} state={state}"]
+
+        # 5. Clean: 200, queued, nothing recorded, nothing failed.
+        label = "a clean prompt answers 200, is queued and records nothing"
+        raised, resp, failed, outputs, state = run("p-q5", (True, None, ["9"], {}))
+        warned = [t for lvl, t in records if lvl in ("WARNING", "ERROR")]
+        ok = (raised is None and status_of(resp) == 200
+              and (body_of(resp) or {}).get("prompt_id") == "p-q5"
+              and len(queued) == 1 and failed == [] and outputs == []
+              and state != "failed" and not warned and not lost())
+        results[label] = ["ok" if ok else "fail",
+                          f"raised={raised} resp={resp!r} failed={failed!r} "
+                          f"outputs={outputs!r} warned={warned!r} lost={lost()!r}"]
+
+        # 6. post_prompt raising: 500, and the run is failed.
+        label = "post_prompt raising answers 500 and the run is failed"
+
+        async def explode(prompt):
+            raise RuntimeError("validate exploded")
+
+        raised, resp, failed, outputs, state = run("p-q6", post_prompt=explode)
+        ok = (raised is None and isinstance(resp, tuple) and resp[0] == "plain"
+              and resp[1] == 500 and len(failed) == 1 and state == "failed")
+        results[label] = ["ok" if ok else "fail",
+                          f"raised={raised} resp={resp!r} failed={failed!r} state={state}"]
+
+        # 7. post_prompt's "no prompt" shape is refused: nothing was queued.
+        label = "a no-prompt answer is 400 and the run is failed"
+
+        async def no_prompt(prompt):
+            return {"error": "no prompt", "node_errors": []}
+
+        raised, resp, failed, outputs, state = run("p-q7", post_prompt=no_prompt)
+        ok = (raised is None and status_of(resp) == 400 and len(failed) == 1
+              and state == "failed")
+        results[label] = ["ok" if ok else "fail",
+                          f"raised={raised} resp={resp!r} failed={failed!r} state={state}"]
+
+        # 8. An answer that names no queued prompt is not reported as queued:
+        #    the runner would poll a prompt id that does not exist.
+        label = "an answer with no prompt_id is not reported as queued"
+
+        async def nothing(prompt):
+            return {"node_errors": {}}
+
+        raised, resp, failed, outputs, state = run("p-q8", post_prompt=nothing)
+        ok = (raised is None and status_of(resp) == 400 and len(failed) == 1
+              and state == "failed")
+        results[label] = ["ok" if ok else "fail",
+                          f"raised={raised} resp={resp!r} failed={failed!r} state={state}"]
+
+        # 9. The logged reason is bounded, however long ComfyUI's text is.
+        label = "the logged reason is bounded"
+        many = {str(i): {"errors": [{"type": "t", "message": "m" * 50,
+                                     "details": "d" * 50, "extra_info": {}}],
+                         "dependent_outputs": ["9"], "class_type": "K"}
+                for i in range(2000)}
+        run("p-q9", (False, dict(no_type, details="x" * 50000), [], many))
+        lines = [t for t in logged() if "invalid prompt" in t]
+        longest = max((len(t) for t in lines), default=0)
+        ok = len(lines) == 1 and 0 < longest <= 4000
+        results[label] = ["ok" if ok else "fail",
+                          f"lines={len(lines)} longest={longest}"]
+
+    # 10. Refused with node_errors: 400, failed, nothing queued, reason recorded.
+    label = f"{route}: a refused prompt with node_errors is failed and not queued"
+    raised, resp, failed, outputs, state = run(
+        "p-r1" + route[:1], (False, refused, [], refused_nodes))
+    answer = body_of(resp) or {}
+    ok = (raised is None and (stream or status_of(resp) == 400)
+          and answer.get("error") == refused and queued == []
+          and len(failed) == 1 and state == "failed"
+          and any(isinstance(o, dict) and o.get("error", {}).get("error") == refused
+                  for o in outputs))
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} resp={resp!r} queued={len(queued)} "
+                      f"failed={failed!r} outputs={outputs!r} state={state}"]
+
+    # 11. ...and its reason and node_errors are logged, without `extra_info` or the prompt.
+    label = f"{route}: a refused prompt's reason and node_errors are logged"
+    hits = [t for t in logged()
+            if "invalid prompt" in t and "Prompt outputs failed validation" in t
+            and "31" in t and "ConditioningKrea2Rebalance" in t
+            and "preset" in t and "renormalize" in t]
+    ok = len(hits) == 1 and not leaks() and not lost()
+    results[label] = ["ok" if ok else "fail",
+                      f"hits={hits!r} leaks={leaks()!r} lost={lost()!r} records={records!r}"]
+
+    # 12. Refused with NO node_errors (missing class_type): 400 and failed. It
+    #     used to answer 200 and never fail the run.
+    label = f"{route}: a refused prompt with no node_errors is failed and not queued"
+    raised, resp, failed, outputs, state = run("p-r3" + route[:1], (False, no_type, [], {}))
+    answer = body_of(resp) or {}
+    ok = (raised is None and (stream or status_of(resp) == 400)
+          and answer.get("error") == no_type and queued == []
+          and len(failed) == 1 and state == "failed")
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} resp={resp!r} failed={failed!r} state={state}"]
+
+    # 13. ...and its reason is logged.
+    label = f"{route}: a refused prompt with no node_errors has its reason logged"
+    hits = [t for t in logged()
+            if "invalid prompt" in t and "missing the class_type" in t and "#95" in t]
+    ok = len(hits) == 1 and not lost()
+    results[label] = ["ok" if ok else "fail",
+                      f"hits={hits!r} lost={lost()!r} records={records!r}"]
+
+    # A refused run is ended by nobody but this node: its FAILED must go out
+    # even when the engine refuses the record POSTed before it (update-run 5xx
+    # on every retry). Otherwise the run sits in "started" until the engine's
+    # reaper marks it timed out, which is the wrong status.
+    def kinds():
+        return [("output" if "output_data" in b else "failed")
+                for b in posts if isinstance(b, dict)
+                and ("output_data" in b or b.get("status") == "failed")]
+
+    def record_post(b):
+        return isinstance(b, dict) and "output_data" in b
+
+    async def explode_validate(prompt):
+        raise RuntimeError("validate exploded")
+
+    # 16. Both POSTs succeed: the record first, then failed.
+    label = f"{route}: a refused prompt posts its record, then failed"
+    raised, resp, failed, outputs, state = run(
+        "p-n0" + route[:1], (False, refused, [], refused_nodes))
+    ok = raised is None and kinds() == ["output", "failed"] and state == "failed"
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} order={kinds()} state={state}"]
+
+    # 17. The record POST fails: failed still goes out, after it, and the
+    #     record's failure is not swallowed.
+    label = f"{route}: a refused prompt whose record POST fails is still failed"
+    raised, resp, failed, outputs, state = run(
+        "p-n1" + route[:1], (False, refused, [], refused_nodes), fail=record_post)
+    ok = (kinds() == ["output", "failed"] and len(failed) == 1
+          and state == "failed" and "engine said no" in str(raised))
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} order={kinds()} failed={failed!r} state={state}"]
+
+    # 18. The same when post_prompt itself raised.
+    label = f"{route}: post_prompt raising with a failing record POST still fails the run"
+    raised, resp, failed, outputs, state = run(
+        "p-n2" + route[:1], post_prompt=explode_validate, fail=record_post)
+    ok = (kinds() == ["output", "failed"] and len(failed) == 1
+          and state == "failed" and "engine said no" in str(raised))
+    results[label] = ["ok" if ok else "fail",
+                      f"raised={raised} order={kinds()} failed={failed!r} state={state}"]
+
+    if stream:
+        # 14. Queued with per-output errors through the stream: not failed.
+        label = "stream_prompt: a prompt queued with per-output node_errors is not failed"
+        raised, resp, failed, outputs, state = run("p-s1", (True, None, ["9"], dropped))
+        ok = (raised is None and isinstance(resp, dict) and resp.get("prompt_id") == "p-s1"
+              and len(queued) == 1 and failed == [] and state != "failed"
+              and len(outputs) == 1)
+        results[label] = ["ok" if ok else "fail",
+                          f"raised={raised} resp={resp!r} failed={failed!r} "
+                          f"outputs={outputs!r} state={state}"]
+
+        # 15. post_prompt raising through the stream: failed, and the stream
+        #     gets an error to send rather than an UnboundLocalError.
+        label = "stream_prompt: post_prompt raising fails the run and returns an error"
+
+        async def explode(prompt):
+            raise RuntimeError("validate exploded")
+
+        raised, resp, failed, outputs, state = run("p-s2", post_prompt=explode)
+        ok = (raised is None and isinstance(resp, dict) and "error" in resp
+              and "prompt_id" not in resp and len(failed) == 1 and state == "failed")
+        results[label] = ["ok" if ok else "fail",
+                          f"raised={raised} resp={resp!r} failed={failed!r} state={state}"]
+
+
 def _run_child(mode):
     env = {k: v for k, v in os.environ.items()
            if k not in ("CD_ENABLE_LOG", "USE_LOGFIRE", "PYTHONPATH",
@@ -797,6 +1244,41 @@ class CustomRoutesWrappers(unittest.TestCase):
             "a stale Executing POST cannot land after the failure reason",
             "an Executing POST still in flight is abandoned, not left to land",
             "the reason and failed POSTs are cut, not left to the engine",
+        })
+
+    def test_the_run_route_answers_like_comfyuis_own_prompt_route(self):
+        self._check(_run_child("queue-outcome"), {
+            "a prompt queued with per-output node_errors answers 200 and is not failed",
+            "the outputs validation dropped are still recorded on the run",
+            "the queued run's own success is posted after it",
+            "the outputs a queued prompt dropped are logged by node and reason",
+            "a record POST that fails leaves the queued run at 200 and is logged",
+            "a record POST that hangs does not hold the queued run's 200",
+            "a clean prompt answers 200, is queued and records nothing",
+            "post_prompt raising answers 500 and the run is failed",
+            "a no-prompt answer is 400 and the run is failed",
+            "an answer with no prompt_id is not reported as queued",
+            "the logged reason is bounded",
+            "the run route: a refused prompt with node_errors is failed and not queued",
+            "the run route: a refused prompt's reason and node_errors are logged",
+            "the run route: a refused prompt with no node_errors is failed and not queued",
+            "the run route: a refused prompt with no node_errors has its reason logged",
+            "the run route: a refused prompt posts its record, then failed",
+            "the run route: a refused prompt whose record POST fails is still failed",
+            "the run route: post_prompt raising with a failing record POST still fails the run",
+        })
+
+    def test_the_streaming_run_fails_a_refused_prompt_and_only_that(self):
+        self._check(_run_child("queue-outcome-stream"), {
+            "stream_prompt: a refused prompt with node_errors is failed and not queued",
+            "stream_prompt: a refused prompt's reason and node_errors are logged",
+            "stream_prompt: a refused prompt with no node_errors is failed and not queued",
+            "stream_prompt: a refused prompt with no node_errors has its reason logged",
+            "stream_prompt: a prompt queued with per-output node_errors is not failed",
+            "stream_prompt: post_prompt raising fails the run and returns an error",
+            "stream_prompt: a refused prompt posts its record, then failed",
+            "stream_prompt: a refused prompt whose record POST fails is still failed",
+            "stream_prompt: post_prompt raising with a failing record POST still fails the run",
         })
 
     def test_a_patch_that_fails_to_install_is_logged_and_comfyui_still_starts(self):

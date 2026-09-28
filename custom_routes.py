@@ -368,12 +368,165 @@ async def post_prompt(json_data):
                 "number": number,
                 "node_errors": valid[3],
             }
+            if valid[3]:
+                # Queued. Validation dropped these outputs ("Output will be
+                # ignored") and the rest of the graph runs, as in stock ComfyUI.
+                getLogger("comfy-deploy").warning(
+                    "prompt queued; validation dropped outputs: %s (prompt_id=%s)",
+                    _describe_prompt_errors(None, valid[3]),
+                    prompt_id,
+                )
             return response
         else:
-            logger.info("invalid prompt:", valid[1])
+            # `logger.info("invalid prompt:", valid[1])` logged a bare
+            # "invalid prompt:": logging unwraps a lone dict argument, and a
+            # format string with no placeholder ignores it. Every refused run
+            # lost its reason that way.
+            getLogger("comfy-deploy").warning(
+                "invalid prompt: %s (prompt_id=%s)",
+                _describe_prompt_errors(valid[1], valid[3]),
+                prompt_id,
+            )
             return {"error": valid[1], "node_errors": valid[3]}
     else:
         return {"error": "no prompt", "node_errors": []}
+
+
+# One log line, bounded. ComfyUI's text for a big graph can run to many KB.
+_PROMPT_ERRORS_LOG_MAX = 2000
+
+
+def _describe_prompt_errors(error, node_errors, limit=_PROMPT_ERRORS_LOG_MAX):
+    """Why validation refused a prompt or dropped outputs, as one bounded line.
+
+    Carries each error's message and details, and each failing node's id and
+    class. That is the same text ComfyUI's validate_prompt logs itself at
+    ERROR, and like that log it CAN carry submitted values. `details` quotes
+    the value it rejected, as in "seed, randomize, invalid literal for int()"
+    or "preset: 1 not in [...]".
+
+    What it leaves out is only the rest: each error's `extra_info` dict
+    (`received_value`, `input_config`, which can be a full option list), every
+    input that did not fail, and the prompt as a whole.
+
+    Never raises: it runs after the prompt is already on ComfyUI's queue, where
+    an exception would turn a queued run into a failed one.
+    """
+    try:
+
+        def reason(e):
+            if not isinstance(e, dict):
+                return str(e)
+            said = [str(e[k]) for k in ("message", "details") if e.get(k) not in (None, "")]
+            return ": ".join(said) or str(e.get("type") or "?")
+
+        parts, size = [], 0
+        if error is not None:
+            parts.append(reason(error))
+            size += len(parts[-1])
+        if isinstance(node_errors, dict):
+            for node_id, entry in node_errors.items():
+                if size > limit:
+                    parts.append(f"... {len(node_errors)} nodes in all")
+                    break
+                entry = entry if isinstance(entry, dict) else {}
+                errors = entry.get("errors")
+                errors = errors if isinstance(errors, list) else []
+                why = "; ".join(reason(e) for e in errors) or "?"
+                parts.append(f"node {node_id} ({entry.get('class_type') or '?'}): {why}")
+                size += len(parts[-1])
+        text = " | ".join(parts).replace("\n", " / ") or "no reason given"
+    except Exception as ex:
+        text = f"(the reason could not be read: {type(ex).__name__})"
+    if len(text) > limit:
+        text = text[: limit - 3] + "..."
+    return text
+
+
+def _queue_outcome(res):
+    """The HTTP status a queue request answers, and whether the prompt is queued.
+
+    This matches ComfyUI's own POST /prompt (server.py `post_prompt`). A prompt
+    that validate_prompt accepted is queued and answered 200 with
+    {prompt_id, number, node_errors}, EVEN WHEN node_errors is non-empty. Those
+    entries are the outputs validation dropped; the rest of the graph runs.
+    Only a refused prompt ({error, node_errors}) answers 400, and nothing of it
+    runs.
+
+    The engine's runner fails a run on any non-200. Answering 400 to the first
+    shape therefore reported FAILED on runs that ComfyUI went on to finish.
+    Answering 200 to a refusal with empty node_errors (a node with no
+    class_type) never failed those runs here at all.
+    """
+    queued = (
+        isinstance(res, dict)
+        and "error" not in res
+        and res.get("prompt_id") is not None
+    )
+    return (200 if queued else 400), queued
+
+
+# The record of a queued prompt's dropped outputs, posted after its 200. Held
+# here so a task is not collected mid-flight.
+_queue_note_background = set()
+
+
+def _log_queue_note_failure(prompt_id, task):
+    _queue_note_background.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        getLogger("comfy-deploy").warning(
+            "comfy-deploy - could not record the outputs validation dropped on "
+            "run %s; the run is queued and goes on: %s",
+            prompt_id,
+            exc,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
+
+async def _record_then_fail(prompt_id, record, gpu_event_id=None):
+    """Record why a run never started, then mark it failed.
+
+    FAILED goes out even when the record POST raises, as it does when the
+    engine's update-run answers 5xx on every retry. Nothing else ends a run
+    that never reached ComfyUI's queue, so without it the run sat in "started"
+    until the engine's reaper marked it timed out. The record's exception
+    still propagates, after FAILED.
+    """
+    try:
+        await update_run_with_output(prompt_id, record, gpu_event_id=gpu_event_id)
+    finally:
+        await update_run(prompt_id, Status.FAILED)
+
+
+async def _settle_queue_outcome(prompt_id, res, gpu_event_id=None):
+    """Record what post_prompt returned on the run. Returns the HTTP status."""
+    status, queued = _queue_outcome(res)
+    if not queued:
+        # Refused: nothing is on ComfyUI's queue, so nothing will ever end
+        # this run but us.
+        await _record_then_fail(
+            prompt_id,
+            {"error": dict(res) if isinstance(res, dict) else res},
+            gpu_event_id=gpu_event_id,
+        )
+    elif res.get("node_errors"):
+        # Queued with outputs dropped. Recorded so the user can see which
+        # outputs were ignored, and NOT a failure: the run goes on and ends
+        # on its own. In the background, because the POST retries for tens of
+        # seconds and raises when the engine refuses it. Awaited here, either
+        # one fails a queued run: the runner gives up on the queue call after
+        # 60 s, and it fails the run on the 500 an exception becomes.
+        task = asyncio.create_task(
+            update_run_with_output(
+                prompt_id, {"error": {**res}}, gpu_event_id=gpu_event_id
+            )
+        )
+        _queue_note_background.add(task)
+        task.add_done_callback(lambda t: _log_queue_note_failure(prompt_id, t))
+    return status
 
 
 def randomSeed(num_digits=15):
@@ -724,34 +877,19 @@ async def comfy_deploy_run(request):
         stack_trace = traceback.format_exc().strip()
         logger.info(f"error: {error_type}, {e}")
         logger.info(f"stack trace: {stack_trace_short}")
-        await update_run_with_output(
+        # When there are critical errors, the prompt is actually not run
+        await _record_then_fail(
             prompt_id,
             {"error": {"error_type": error_type, "stack_trace": stack_trace}},
             gpu_event_id=gpu_event_id,
         )
-        # When there are critical errors, the prompt is actually not run
-        await update_run(prompt_id, Status.FAILED)
         return web.Response(
             status=500, reason=f"{error_type}: {e}, {stack_trace_short}"
         )
 
-    status = 200
-
-    if (
-        "node_errors" in res
-        and res["node_errors"] is not None
-        and len(res["node_errors"]) > 0
-    ):
-        # Even tho there are node_errors it can still be run
-        status = 400
-        await update_run_with_output(
-            prompt_id, {"error": {**res}}, gpu_event_id=gpu_event_id
-        )
-
-        # When there are critical errors, the prompt is actually not run
-        if "error" in res:
-            await update_run(prompt_id, Status.FAILED)
-
+    # 200 whenever the prompt is on ComfyUI's queue, node_errors or not. The
+    # engine's runner fails the run on anything else.
+    status = await _settle_queue_outcome(prompt_id, res, gpu_event_id=gpu_event_id)
     return web.json_response(res, status=status)
 
 
@@ -803,30 +941,22 @@ async def stream_prompt(data, token):
         stack_trace = traceback.format_exc().strip()
         logger.info(f"error: {error_type}, {e}")
         logger.info(f"stack trace: {stack_trace_short}")
-        await update_run_with_output(
-            prompt_id, {"error": {"error_type": error_type, "stack_trace": stack_trace}}
+        # When there are critical errors, the prompt is actually not run
+        await _record_then_fail(
+            prompt_id,
+            {"error": {"error_type": error_type, "stack_trace": stack_trace}},
+            gpu_event_id=gpu_event_id,
         )
-        # When there are critical errors, the prompt is actually not run
-        await update_run(prompt_id, Status.FAILED)
-        # return web.Response(status=500, reason=f"{error_type}: {e}, {stack_trace_short}")
-        # raise Exception("Prompt failed")
+        # `res` was never assigned. Falling through raised UnboundLocalError
+        # in place of this error.
+        return {
+            "error": {"type": error_type, "message": str(e)[:1000]},
+            "node_errors": {},
+        }
 
-    status = 200
-
-    if (
-        "node_errors" in res
-        and res["node_errors"] is not None
-        and len(res["node_errors"]) > 0
-    ):
-        # Even tho there are node_errors it can still be run
-        status = 400
-        await update_run_with_output(prompt_id, {"error": {**res}})
-
-        # When there are critical errors, the prompt is actually not run
-        if "error" in res:
-            await update_run(prompt_id, Status.FAILED)
-            # raise Exception("Prompt failed")
-
+    # Its caller streams until a terminal status, so a refused prompt must be
+    # failed here, including one with no node_errors, or the stream never ends.
+    await _settle_queue_outcome(prompt_id, res, gpu_event_id=gpu_event_id)
     return res
     # return web.json_response(res, status=status)
 
