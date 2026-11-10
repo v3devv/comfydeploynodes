@@ -21,6 +21,7 @@ Standard library only, so the node, the routes and the tests share one copy.
 Nothing here raises: a scrubber on an error path must not become the error.
 """
 
+import builtins
 import functools
 import inspect
 import logging
@@ -33,9 +34,12 @@ REDACTED_LORA_REF = "mlr1.[redacted]"
 REDACTED_QUERY = "?" + REDACTED
 
 # The contract's pattern is `mlr1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}`. This one
-# also takes a reference cut short, since its payload alone carries the link.
-# Deploy's `redact_secrets` uses the same pattern.
-_LORA_REF = re.compile(r"mlr1\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*)?")
+# also takes a reference cut short, since its payload alone carries the link
+# (Deploy's `redact_secrets` stops there), and a separator that arrives escaped
+# (`\u002e` in JSON, `%2E` in a URL) or a prefix in capitals, so an escaped
+# copy of the payload never slips past.
+_REF_DOT = r"(?:\.|\\+u002e|%2e)"
+_LORA_REF = re.compile(r"(?i)mlr1" + _REF_DOT + r"[A-Za-z0-9_-]+(?:" + _REF_DOT + r"[A-Za-z0-9_-]*)?")
 
 # Query parameters whose value is a credential: AWS SigV4 and R2, CloudFront,
 # GCS (X-Goog-Signature ends in "Signature"), Azure SAS (`sig`), and tokens.
@@ -49,15 +53,19 @@ _SIGNING_PARAMETERS = (
     "sig",
 )
 _PARAMETER = r"(?:" + "|".join(re.escape(p) for p in _SIGNING_PARAMETERS) + r")"
-# `=` may arrive percent encoded inside a URL carried in another URL.
-_SIGNED_QUERY = re.compile(r"(?i)(?<![a-z0-9])" + _PARAMETER + r"(?:=|%3d)")
-_PARAMETER_VALUE = re.compile(r"(?i)(?<![a-z0-9])(" + _PARAMETER + r")(=|%3d)([^\s&,;\"'<>\\`]+)")
+# Inside a URL carried in another URL the `?` or `&` before a name arrives
+# percent encoded (`%3F`, `%26`), and so does the `=` after it.
+_NAME_START = r"(?:(?<![a-z0-9])|(?<=%[0-9a-f]{2}))"
+_SIGNED_QUERY = re.compile(r"(?i)" + _NAME_START + _PARAMETER + r"(?:=|%3d)")
+_PARAMETER_VALUE = re.compile(r"(?i)" + _NAME_START + r"(" + _PARAMETER + r")(=|%3d)([^\s&,;\"'<>\\`]+)")
 _URL = re.compile(r"(?i)\bhttps?://[^\s\"'<>\\`]+")
 # Eight characters at least, so prose such as "using bearer token" survives.
 _BEARER = re.compile(r"(?i)(?<![a-z0-9_])(bearer[ \t]+)([A-Za-z0-9._~+/=-]{8,})")
 # `'bearer_token': 'x'`, `"Authorization": "x"`, `bearer_token='x'` in a repr,
-# also inside a JSON string, where the quotes arrive escaped.
-_SECRET_FIELD_TEXT = re.compile(r"""(?i)(\\?["']?)\b(bearer_token|authorization)\1(\s*[:=]\s*)(\\?["'])(.*?)\4""")
+# also inside a JSON string, where the quotes arrive escaped, and the first
+# item of a list or tuple value, as ComfyUI's `current_inputs` holds one.
+_SECRET_FIELD_TEXT = re.compile(
+    r"""(?i)(\\?["']?)\b(bearer_token|authorization)\1(\s*[:=]\s*)([\[(]\s*)?(\\?["'])(.*?)\5""")
 
 # Keys whose value is withheld whole wherever it sits in a structure.
 SECRET_FIELDS = frozenset({"bearer_token", "authorization"})
@@ -67,6 +75,9 @@ _MIN_WITHHELD = 8
 
 # ComfyUI events whose data repeats node inputs or error text.
 SCRUBBED_EVENTS = frozenset({"execution_error", "execution_interrupted"})
+
+# Python 3.11 and later; a traceback of a group shows its members too.
+_GROUP = getattr(builtins, "BaseExceptionGroup", None)
 
 
 def _strip_signed_query(match):
@@ -78,10 +89,10 @@ def _strip_signed_query(match):
 
 
 def _field(match):
-    key_quote, name, separator, value_quote, value = match.groups()
+    key_quote, name, separator, opener, value_quote, value = match.groups()
     if value == "":
         return match.group(0)
-    return f"{key_quote}{name}{key_quote}{separator}{value_quote}{REDACTED}{value_quote}"
+    return f"{key_quote}{name}{key_quote}{separator}{opener or ''}{value_quote}{REDACTED}{value_quote}"
 
 
 def _as_text(value):
@@ -105,10 +116,12 @@ def scrub_text(text, withheld=()):
             if isinstance(literal, str) and len(literal) >= _MIN_WITHHELD:
                 text = text.replace(literal, REDACTED)
         text = _LORA_REF.sub(REDACTED_LORA_REF, text)
+        # Fields first: `bearer_token=('x',)` would otherwise lose only its
+        # `(` to the `token=` parameter rule below and keep the token.
+        text = _SECRET_FIELD_TEXT.sub(_field, text)
         text = _URL.sub(_strip_signed_query, text)
         text = _PARAMETER_VALUE.sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", text)
-        text = _BEARER.sub(lambda m: f"{m.group(1)}{REDACTED}", text)
-        return _SECRET_FIELD_TEXT.sub(_field, text)
+        return _BEARER.sub(lambda m: f"{m.group(1)}{REDACTED}", text)
     except Exception:  # noqa: BLE001
         return "<unscrubbable text>"
 
@@ -186,14 +199,46 @@ class ScrubbedError(RuntimeError):
     Its message is the scrubbed one, and the original is not shown as context."""
 
 
+def _message(exc):
+    try:
+        return str(exc)
+    except Exception:  # noqa: BLE001, a formatted traceback shows a placeholder
+        return None
+
+
+def _notes(exc):
+    notes = getattr(exc, "__notes__", None)
+    return [n for n in notes if isinstance(n, str)] if isinstance(notes, list) else []
+
+
+def _linked(exc):
+    """Every exception other than `exc` a formatted traceback of it would show:
+    its cause or unsuppressed context, theirs, and an exception group's members."""
+    stack, seen = [exc], {id(exc)}
+    while stack:
+        current = stack.pop()
+        follow = [current.__cause__ if current.__cause__ is not None
+                  else None if current.__suppress_context__ else current.__context__]
+        if _GROUP is not None and isinstance(current, _GROUP):
+            follow.extend(current.exceptions)
+        for linked in follow:
+            if isinstance(linked, BaseException) and id(linked) not in seen:
+                seen.add(id(linked))
+                stack.append(linked)
+                yield linked
+
+
 def scrub_raised(*withheld_arguments):
     """Decorate a node's function so nothing it raises carries a credential.
 
-    An exception whose message is clean is raised unchanged. One whose message
-    would carry a reference, a signed link, a token or the value of one of
-    `withheld_arguments` (named parameters of the function, withheld
-    literally) is replaced by a ScrubbedError with the scrubbed message,
-    raised `from None` so a formatted traceback does not show the original."""
+    An exception whose message, notes and chain are clean is raised unchanged.
+    One whose message would carry a reference, a signed link, a token or the
+    value of one of `withheld_arguments` (named parameters of the function,
+    withheld literally) is replaced by a ScrubbedError with the scrubbed
+    message, raised `from None` so a formatted traceback does not show the
+    original. A clean one whose notes leak keeps them scrubbed; one whose cause
+    or context leaks (ComfyUI prints the whole chain to the run log) is raised
+    with its chain dropped."""
 
     def decorate(function):
         signature = inspect.signature(function)
@@ -208,26 +253,38 @@ def scrub_raised(*withheld_arguments):
                 except TypeError:
                     bound = kwargs
                 withheld = tuple(bound.get(name) for name in withheld_arguments)
-                try:
-                    message = str(exc)
-                except Exception:  # noqa: BLE001
-                    message = None
-                clean = scrub_text(message, withheld) if message is not None else None
-                if clean is not None and clean == message:
-                    raise
-                if clean is None:
-                    clean = f"{type(exc).__name__}, its message withheld"
-                raise ScrubbedError(clean) from None
+
+                def leaks(text):
+                    return text is not None and scrub_text(text, withheld) != text
+
+                message = _message(exc)
+                if message is None or leaks(message):
+                    clean = (scrub_text(message, withheld) if message is not None
+                             else f"{type(exc).__name__}, its message withheld")
+                    raise ScrubbedError(clean) from None
+                if any(leaks(note) for note in _notes(exc)):
+                    exc.__notes__ = [scrub_text(n, withheld) if isinstance(n, str) else n for n in exc.__notes__]
+                if any(leaks(_message(e)) or any(leaks(n) for n in _notes(e)) for e in _linked(exc)):
+                    if _GROUP is not None and isinstance(exc, _GROUP):
+                        raise ScrubbedError(message) from None  # a group's members cannot be taken off it
+                    exc.__cause__ = None
+                    exc.__context__ = None
+                    exc.__suppress_context__ = True
+                raise
 
         return wrapper
 
     return decorate
 
 
-def _log_arg(value):
+def _log_arg(value, keep_objects=False):
+    """A log argument scrubbed. With `keep_objects` any other value is kept as
+    it is, so `%d` or `%r` formats it as logging would; the rendered line is
+    scrubbed whole after formatting anyway. Without it (an attribute a logger
+    stores as given) it becomes its scrubbed text."""
     if value is None or isinstance(value, (bool, int, float, str, dict, list, tuple)):
         return scrub_value(value)
-    return scrub_text(value)
+    return value if keep_objects else scrub_text(value)
 
 
 def render_log(msg, args):
@@ -243,7 +300,7 @@ def render_log(msg, args):
         if isinstance(args, Mapping):
             clean = _log_arg(dict(args))
         else:
-            clean = tuple(_log_arg(a) for a in args)
+            clean = tuple(_log_arg(a, keep_objects=True) for a in args)
         try:
             text = text % clean
         except Exception:  # noqa: BLE001
