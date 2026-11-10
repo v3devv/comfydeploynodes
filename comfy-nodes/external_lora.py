@@ -11,6 +11,7 @@ volume. Never log a reference, its inner link or headers; a relPath may be.
 
 import base64
 import binascii
+import contextlib
 import hashlib
 import json
 import os
@@ -20,6 +21,7 @@ import time
 import uuid
 
 import folder_paths
+from monet_redact import print_scrubbed as _log, scrub_raised, scrub_text  # NV2: no credential in a log or error
 
 REF_PREFIX = "mlr1."
 REL_PATH = re.compile(r"^monet/[a-z0-9]{20,40}/[a-z0-9]{20,40}/[a-z0-9]{20,40}-[0-9a-f]{12}\.safetensors$")
@@ -28,14 +30,12 @@ RUN_CACHE_MAX_BYTES = 8 * 1024 * 1024 * 1024
 # A LoraLoader opens a returned cache file later, maybe after another External Lora node in the
 # prompt evicted, or via a node output ComfyUI reuses. Eviction skips it this long (a ref's life).
 RUN_CACHE_PROTECT_SECONDS = 7200
-# The LoRA volume as ComfyUI's default loras folder sees it (it symlinks to
-# /private_models). The node only ever reads it.
+# The LoRA volume as ComfyUI's default loras folder sees it (a symlink to /private_models); read only.
 VOLUME_LORA_ROOT = "/comfyui/models/loras"
 ALLOW_URL_ENV = "MONET_LORA_ALLOW_URL"
 SHADOW_PREFIX = "shadow/"
 URL_PREFIX = "url/"
-# Names that only a reference may produce. They are hidden from the default
-# list and refused as a baked default.
+# Names only a reference may produce: hidden from the default list, refused as a baked default.
 PRIVATE_PREFIXES = ("monet/", SHADOW_PREFIX, URL_PREFIX)
 
 REF_MAX_CHARS = 4096
@@ -49,13 +49,11 @@ _DEPLOYMENT = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 _SOURCE = re.compile(r"https://[\x21-\x7E]+")
 _SOURCE_MAX_CHARS = 2048
 
-# A LoRA smaller than this is an error page, not weights. The smallest real
-# LoRAs are hundreds of KiB; the error bodies this catches are under a few KiB.
+# Smaller is an error page, not weights: real LoRAs are hundreds of KiB, error bodies a few KiB.
 MIN_LORA_BYTES = 16 * 1024
 # Larger than any LoRA we train or load; a body past this is not a LoRA either.
 MAX_LORA_BYTES = 8 * 1024 * 1024 * 1024
-# (connect, read between chunks) in seconds, so a stalled link fails the run
-# instead of holding the GPU until the run timeout.
+# (connect, read between chunks) seconds: a stalled link fails the run, not holds the GPU till timeout.
 DOWNLOAD_TIMEOUT = (30, 120)
 CHUNK_BYTES = 1024 * 1024
 
@@ -72,7 +70,8 @@ class LoraRefError(RuntimeError):
 
     def __init__(self, code, detail=None):
         self.code = code
-        super().__init__(f"External Lora refused the value ({code}): {detail or _MESSAGES.get(code, code)}.")
+        message = f"External Lora refused the value ({code}): {detail or _MESSAGES.get(code, code)}."
+        super().__init__(scrub_text(message))
 
 
 class LoraDownloadError(RuntimeError):
@@ -339,7 +338,8 @@ def _download_lora(requests, url, headers, destination_path, expected_sha256=Non
     except Exception as exc:
         raise fail(f"failed: {type(exc).__name__}.") from None
     finally:
-        response.close()
+        with contextlib.suppress(Exception):  # a failing close must not replace the error with one naming the link
+            response.close()
         if os.path.exists(temp_path):
             os.remove(temp_path)
     if expected_sha256 is not None:  # hashed on the way in, so the next run need not rehash
@@ -383,11 +383,11 @@ def _serve_from_cache(requests, name, claims):
         # ComfyUI would load that file, not the checked one.
         raise LoraRefError("path", f"{name} is shadowed by a folder searched before the run cache")
     if _checked_file(RUN_CACHE_ROOT, name, claims["n"], claims["h"]):
-        print(f"Ext Lora: run cache hit {name}")
+        _log(f"Ext Lora: run cache hit {name}")
     else:
         destination = _cache_destination(name)
         _evict_run_cache(claims["n"], destination)
-        print(f"Ext Lora: fetching {rel} into the run cache")
+        _log(f"Ext Lora: fetching {rel} into the run cache")
         _download_lora(requests, claims["u"], {"User-Agent": "Mozilla/5.0"}, destination,
                        expected_sha256=claims["h"], expected_size=claims["n"])
     return name
@@ -396,7 +396,7 @@ def _serve_from_cache(requests, name, claims):
 try:
     os.makedirs(RUN_CACHE_ROOT, exist_ok=True)
 except OSError as exc:
-    print(f"Ext Lora: could not create the run cache {RUN_CACHE_ROOT}: {type(exc).__name__}")
+    _log(f"Ext Lora: could not create the run cache {RUN_CACHE_ROOT}: {type(exc).__name__}")
 folder_paths.add_model_folder_path("loras", RUN_CACHE_ROOT)
 
 
@@ -431,6 +431,7 @@ class ComfyUIDeployExternalLora:
     FUNCTION = "run"
     CATEGORY = "🔗ComfyDeploy"
 
+    @scrub_raised("bearer_token")  # ComfyUI reports what this raises; a credential in it is scrubbed
     def run(self, input_id, default_lora_name=None, lora_save_name=None, display_name=None,
             description=None, lora_url=None, bearer_token=None):
         import requests
@@ -441,7 +442,7 @@ class ComfyUIDeployExternalLora:
             if isinstance(default_lora_name, str) and any(n.startswith(PRIVATE_PREFIXES) for n in (
                     default_lora_name, os.path.relpath(os.path.join("/", default_lora_name), "/"))):
                 raise LoraRefError("path", "a Monet LoRA loads only from a signed reference, never a default")
-            print(f"Ext Lora loading: {default_lora_name}")
+            _log(f"Ext Lora loading: {default_lora_name}")
             return (default_lora_name,)
 
         if not isinstance(value, str):
@@ -454,20 +455,20 @@ class ComfyUIDeployExternalLora:
                 volume_copy = os.path.realpath(os.path.join(VOLUME_LORA_ROOT, rel))
                 if not _resolves_to(rel, volume_copy):
                     raise LoraRefError("path", f"{rel} does not resolve to the checked volume copy")
-                print(f"Ext Lora: volume hit {rel}")
+                _log(f"Ext Lora: volume hit {rel}")
                 return (rel,)
             if os.path.lexists(os.path.join(VOLUME_LORA_ROOT, rel)):
-                print(f"lora volume copy failed its check: {rel}")
+                _log(f"lora volume copy failed its check: {rel}")
                 name = SHADOW_PREFIX + rel
             else:
-                print(f"Ext Lora: volume miss {rel}")
+                _log(f"Ext Lora: volume miss {rel}")
                 name = rel
             _serve_from_cache(requests, name, claims)
             cached = os.path.realpath(os.path.join(RUN_CACHE_ROOT, name))
             if not _resolves_to(name, cached):
                 raise LoraRefError("path", f"{name} does not resolve to the checked run cache copy")
             _mark_returned(name)
-            print(f"Ext Lora loaded: {name}")
+            _log(f"Ext Lora loaded: {name}")
             return (name,)
 
         if value.startswith("https://") or value.startswith("http://"):
@@ -480,16 +481,16 @@ class ComfyUIDeployExternalLora:
             _evict_run_cache(0, destination)
             # Never log the URL: a presigned link carries its signature in
             # the query string, so it is a credential until it expires.
-            print(f"Ext Lora downloading to {destination}")
+            _log(f"Ext Lora downloading to {destination}")
             headers = {"User-Agent": "Mozilla/5.0"}
             if bearer_token:
                 headers["Authorization"] = f"Bearer {bearer_token}"
-                print("using bearer token")
+                _log("using bearer token")
             _download_lora(requests, value, headers, destination)
             if not _resolves_to(name, os.path.realpath(destination)):
                 raise LoraRefError("path", f"{name} does not resolve to the downloaded file")
             _mark_returned(name)
-            print(f"Ext Lora loaded: {name}")
+            _log(f"Ext Lora loaded: {name}")
             return (name,)
 
         raise LoraRefError("not_a_ref")

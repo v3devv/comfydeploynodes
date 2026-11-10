@@ -29,6 +29,9 @@ from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NODE_PATH = os.path.join(ROOT, "comfy-nodes", "external_lora.py")
+# The node imports `monet_redact` from the fork root, as ComfyUI's package loader allows.
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "lora_volume")
 
 # The query string of a presigned link. It must never reach a log or an error.
@@ -222,7 +225,7 @@ class LoraTestCase(unittest.TestCase):
 
     # helpers
 
-    def run_node(self, value, default=None, save_name=None, bearer=None):
+    def run_node(self, value, default=None, save_name=None, bearer=None, input_id="input_lora"):
         if isinstance(value, str) and value.startswith("mlr1.") and len(value) > 8:
             self.secrets.append(value)
             self.secrets.append(value.split(".")[1])
@@ -230,7 +233,7 @@ class LoraTestCase(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             try:
                 result = self.node.run(
-                    "input_lora",
+                    input_id,
                     default_lora_name=default,
                     lora_save_name=save_name,
                     lora_url=value,

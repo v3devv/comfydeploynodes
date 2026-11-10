@@ -161,6 +161,13 @@ if not use_logfire:
     logger = getLogger("comfy-deploy")
     basicConfig(level="INFO")  # You can adjust the logging level as needed
 
+from monet_redact import ScrubbingLogger, scrub_event_in_place, scrub_text, scrub_value
+
+# NV2: an External Lora run carries a signed reference, presigned links and a
+# bearer token in its inputs. Every log line, error and status that leaves
+# here for Deploy (which stores it) is scrubbed of them first.
+logger = ScrubbingLogger(logger)
+
 
 def log(level, message, **kwargs):
     if use_logfire:
@@ -641,11 +648,12 @@ async def comfy_deploy_run(request):
     )
 
     try:
-        res = await post_prompt(prompt)
+        # Validation errors repeat input values, so the answer is scrubbed too.
+        res = scrub_value(await post_prompt(prompt))
     except Exception as e:
         error_type = type(e).__name__
-        stack_trace_short = traceback.format_exc().strip().split("\n")[-2]
-        stack_trace = traceback.format_exc().strip()
+        stack_trace_short = scrub_text(traceback.format_exc().strip().split("\n")[-2])
+        stack_trace = scrub_text(traceback.format_exc().strip())
         logger.info(f"error: {error_type}, {e}")
         logger.info(f"stack trace: {stack_trace_short}")
         await update_run_with_output(
@@ -656,7 +664,7 @@ async def comfy_deploy_run(request):
         # When there are critical errors, the prompt is actually not run
         await update_run(prompt_id, Status.FAILED)
         return web.Response(
-            status=500, reason=f"{error_type}: {e}, {stack_trace_short}"
+            status=500, reason=scrub_text(f"{error_type}: {e}, {stack_trace_short}")
         )
 
     status = 200
@@ -718,11 +726,12 @@ async def stream_prompt(data, token):
     # log('info', "Begin prompt", prompt=prompt)
 
     try:
-        res = await post_prompt(prompt)
+        # Validation errors repeat input values, so the answer is scrubbed too.
+        res = scrub_value(await post_prompt(prompt))
     except Exception as e:
         error_type = type(e).__name__
-        stack_trace_short = traceback.format_exc().strip().split("\n")[-2]
-        stack_trace = traceback.format_exc().strip()
+        stack_trace_short = scrub_text(traceback.format_exc().strip().split("\n")[-2])
+        stack_trace = scrub_text(traceback.format_exc().strip())
         logger.info(f"error: {error_type}, {e}")
         logger.info(f"stack trace: {stack_trace_short}")
         await update_run_with_output(
@@ -1438,6 +1447,9 @@ origin_func = server.PromptServer.send_sync
 def swizzle_send_sync(self, event, data, sid=None):
     # print(f"swizzle_send_sync, event: {event}, data: {data}")
     global CURRENT_START_EXECUTION_DATA
+    # execution_error repeats the failing node's inputs. ComfyUI keeps this
+    # same dict in the prompt's history, so it is scrubbed in place, first.
+    scrub_event_in_place(event, data)
     if event == "execution_start":
         global NODE_EXECUTION_TIMES
         NODE_EXECUTION_TIMES = {}  # Reset execution times at start
@@ -1468,6 +1480,8 @@ send_json = prompt_server.send_json
 
 async def send_json_override(self, event, data, sid=None):
     # logger.info(f"INTERNAL: event={event}, data={data}, sid={sid}")
+    # Every channel below (both websockets, the stream, Deploy) gets it scrubbed.
+    scrub_event_in_place(event, data)
     prompt_id = data.get("prompt_id")
 
     target_sid = sid
@@ -1782,7 +1796,7 @@ async def update_run(prompt_id: str, status: Status):
                             "run_id": prompt_id,
                             "log_data": [
                                 {
-                                    "logs": log_data,
+                                    "logs": scrub_text(log_data),
                                     # "timestamp": time.time(),
                                 }
                             ],
@@ -2328,11 +2342,11 @@ async def watch_file_changes(file_path, callback):
 async def send_first_time_log(sid):
     with open(log_file_path, "r") as file:
         lines = file.readlines()
-    await send("LOGS", "".join(lines), sid)
+    await send("LOGS", scrub_text("".join(lines)), sid)
 
 
 async def send_logs_to_websocket(logs):
-    await send("LOGS", logs)
+    await send("LOGS", scrub_text(logs))
 
 
 def start_loop(loop):
@@ -2749,7 +2763,7 @@ class UploadQueue:
                 {
                     "prompt_id": prompt_id,
                     "filename": filename_base,
-                    "error": str(e),
+                    "error": scrub_text(str(e)),
                     "node_id": node_id,
                 },
             )
