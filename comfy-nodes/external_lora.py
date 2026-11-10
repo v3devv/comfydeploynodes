@@ -16,6 +16,7 @@ import json
 import os
 import re
 import stat
+import time
 import uuid
 
 import folder_paths
@@ -24,6 +25,9 @@ REF_PREFIX = "mlr1."
 REL_PATH = re.compile(r"^monet/[a-z0-9]{20,40}/[a-z0-9]{20,40}/[a-z0-9]{20,40}-[0-9a-f]{12}\.safetensors$")
 RUN_CACHE_ROOT = "/tmp/monet-loras"
 RUN_CACHE_MAX_BYTES = 8 * 1024 * 1024 * 1024
+# A LoraLoader opens a returned cache file later, maybe after another External Lora node in the
+# prompt evicted, or via a node output ComfyUI reuses. Eviction skips it this long (a ref's life).
+RUN_CACHE_PROTECT_SECONDS = 7200
 # The LoRA volume as ComfyUI's default loras folder sees it (it symlinks to
 # /private_models). The node only ever reads it.
 VOLUME_LORA_ROOT = "/comfyui/models/loras"
@@ -63,8 +67,8 @@ _MESSAGES = {
 
 
 class LoraRefError(RuntimeError):
-    """A value this node will not load. `.code` is "shape", "path" or
-    "not_a_ref". The message never carries the value."""
+    """A value this node will not load. `.code` is "shape", "path" or "not_a_ref"; the message
+    never carries the value."""
 
     def __init__(self, code, detail=None):
         self.code = code
@@ -206,21 +210,31 @@ def _checked_file(root, name, size, sha256):
 def _volume_hit(rel, size, sha256):
     """True when the read only volume holds rel with the reference's size and
     sha256, resolving under the volume's loras root."""
-    if not isinstance(rel, str) or not REL_PATH.fullmatch(rel):
-        return False
-    return _checked_file(VOLUME_LORA_ROOT, rel, size, sha256)
+    return isinstance(rel, str) and bool(REL_PATH.fullmatch(rel)) and _checked_file(VOLUME_LORA_ROOT, rel, size, sha256)
+
+
+_RETURNED = {}  # abspath of a returned cache file: time.monotonic() at its last return
+
+
+def _mark_returned(name):
+    _RETURNED[os.path.abspath(os.path.join(RUN_CACHE_ROOT, name))] = time.monotonic()
 
 
 def _evict_run_cache(incoming_bytes, keep_path):
-    """Delete the least recently modified run cache files until the cache plus
-    `incoming_bytes` fits RUN_CACHE_MAX_BYTES. `keep_path` is never deleted."""
+    """Delete the least recently modified run cache files until the cache plus `incoming_bytes`
+    fits RUN_CACHE_MAX_BYTES. Never `keep_path`, nor a file returned in the last
+    RUN_CACHE_PROTECT_SECONDS (those still count toward the cap)."""
     keep = os.path.abspath(keep_path)
+    now = time.monotonic()
+    for path, at in list(_RETURNED.items()):
+        if now - at >= RUN_CACHE_PROTECT_SECONDS:
+            del _RETURNED[path]
     entries = []
     total = 0
     for dirpath, _dirs, files in os.walk(RUN_CACHE_ROOT):
         for fn in files:
-            path = os.path.join(dirpath, fn)
-            if os.path.abspath(path) == keep:
+            path = os.path.abspath(os.path.join(dirpath, fn))
+            if path == keep:
                 continue
             try:
                 st = os.lstat(path)
@@ -229,7 +243,8 @@ def _evict_run_cache(incoming_bytes, keep_path):
             if not stat.S_ISREG(st.st_mode):
                 continue
             total += st.st_size
-            entries.append((st.st_mtime_ns, path, st.st_size))
+            if path not in _RETURNED:
+                entries.append((st.st_mtime_ns, path, st.st_size))
     entries.sort()
     for _mtime, path, size in entries:
         if total + incoming_bytes <= RUN_CACHE_MAX_BYTES:
@@ -327,8 +342,7 @@ def _download_lora(requests, url, headers, destination_path, expected_sha256=Non
         response.close()
         if os.path.exists(temp_path):
             os.remove(temp_path)
-    if expected_sha256 is not None:
-        # The bytes were hashed on the way in; the next run need not rehash.
+    if expected_sha256 is not None:  # hashed on the way in, so the next run need not rehash
         try:
             real = os.path.realpath(destination_path)
             st = os.stat(real)
@@ -357,9 +371,7 @@ def _resolves_to(name, expected_real):
 def _resolves_elsewhere(name):
     """True when ComfyUI would load `name` from a folder other than the cache."""
     resolved = folder_paths.get_full_path("loras", name)
-    if resolved is None:
-        return False
-    return not _is_under(os.path.realpath(resolved), os.path.realpath(RUN_CACHE_ROOT))
+    return resolved is not None and not _is_under(os.path.realpath(resolved), os.path.realpath(RUN_CACHE_ROOT))
 
 
 def _serve_from_cache(requests, name, claims):
@@ -376,20 +388,9 @@ def _serve_from_cache(requests, name, claims):
         destination = _cache_destination(name)
         _evict_run_cache(claims["n"], destination)
         print(f"Ext Lora: fetching {rel} into the run cache")
-        _download_lora(
-            requests,
-            claims["u"],
-            {"User-Agent": "Mozilla/5.0"},
-            destination,
-            expected_sha256=claims["h"],
-            expected_size=claims["n"],
-        )
+        _download_lora(requests, claims["u"], {"User-Agent": "Mozilla/5.0"}, destination,
+                       expected_sha256=claims["h"], expected_size=claims["n"])
     return name
-
-
-def _url_allowed():
-    raw = os.environ.get(ALLOW_URL_ENV)
-    return raw is None or raw == "1"
 
 
 try:
@@ -436,7 +437,9 @@ class ComfyUIDeployExternalLora:
 
         value = lora_url
         if value is None or value == "":
-            if isinstance(default_lora_name, str) and default_lora_name.startswith(PRIVATE_PREFIXES):
+            # ComfyUI normalises a name before its lookup, so "./monet/x" loads "monet/x".
+            if isinstance(default_lora_name, str) and any(n.startswith(PRIVATE_PREFIXES) for n in (
+                    default_lora_name, os.path.relpath(os.path.join("/", default_lora_name), "/"))):
                 raise LoraRefError("path", "a Monet LoRA loads only from a signed reference, never a default")
             print(f"Ext Lora loading: {default_lora_name}")
             return (default_lora_name,)
@@ -463,11 +466,12 @@ class ComfyUIDeployExternalLora:
             cached = os.path.realpath(os.path.join(RUN_CACHE_ROOT, name))
             if not _resolves_to(name, cached):
                 raise LoraRefError("path", f"{name} does not resolve to the checked run cache copy")
+            _mark_returned(name)
             print(f"Ext Lora loaded: {name}")
             return (name,)
 
         if value.startswith("https://") or value.startswith("http://"):
-            if not _url_allowed():
+            if os.environ.get(ALLOW_URL_ENV) not in (None, "1"):
                 raise LoraRefError("not_a_ref", f"plain URLs are off ({ALLOW_URL_ENV})")
             if lora_save_name:
                 raise LoraRefError("not_a_ref", "lora_save_name must be empty; a URL LoRA is never saved by name")
@@ -484,6 +488,7 @@ class ComfyUIDeployExternalLora:
             _download_lora(requests, value, headers, destination)
             if not _resolves_to(name, os.path.realpath(destination)):
                 raise LoraRefError("path", f"{name} does not resolve to the downloaded file")
+            _mark_returned(name)
             print(f"Ext Lora loaded: {name}")
             return (name,)
 

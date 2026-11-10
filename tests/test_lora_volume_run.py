@@ -317,6 +317,25 @@ class DefaultName(LoraTestCase):
                 self.assertIsInstance(error, self.module.LoraRefError)
                 self.assertEqual(error.code, "path")
 
+    def test_a_private_default_in_disguise_is_refused(self):
+        # ComfyUI's get_full_path normalises a name before the lookup, so each
+        # of these loads the monet/, shadow/ or url/ file a prefix check misses.
+        rel = rel_for("f" * 64)
+        self.put(self.volume_dir, rel, safetensors_bytes())
+        for default in (
+            "./" + rel,
+            "/" + rel,
+            "//" + rel,
+            "style/../" + rel,
+            "monet//" + rel[len("monet/"):],
+            "./shadow/" + rel,
+            "style/../url/" + "0" * 32 + ".safetensors",
+        ):
+            with self.subTest(default=default):
+                _, error, _ = self.run_node(None, default=default)
+                self.assertIsInstance(error, self.module.LoraRefError, f"loaded {default!r}")
+                self.assertEqual(error.code, "path")
+
 
 class RunCacheEviction(LoraTestCase):
     def aged(self, rel, data, age):
