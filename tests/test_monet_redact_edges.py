@@ -9,6 +9,7 @@ value is a one item list, a leaking exception chained under a clean one, and
 log arguments that `%` formats by type.
 """
 
+import logging
 import os
 import sys
 import traceback
@@ -20,7 +21,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 import monet_redact as r  # noqa: E402
-from lora_harness import REF_SOURCE, claims_for, make_ref, safetensors_bytes  # noqa: E402
+from lora_harness import REF_SOURCE, URL, claims_for, make_ref, safetensors_bytes  # noqa: E402
 
 REF = make_ref(claims_for(safetensors_bytes()))
 PAYLOAD = REF.split(".")[1]
@@ -142,6 +143,97 @@ class LogArgumentsFormatByType(unittest.TestCase):
 
     def test_an_object_argument_is_still_scrubbed(self):
         self.assertEqual(r.render_log("failed: %s", (ValueError(f"GET {REF}"),)), "failed: GET mlr1.[redacted]")
+
+
+class Shown:
+    """An object that renders as the given text, for `%s` and `%r` alike."""
+
+    def __init__(self, text):
+        self.text = text
+
+    def __str__(self):
+        return self.text
+
+    __repr__ = __str__
+
+
+class ReviewTwoEdges(unittest.TestCase):
+    """Forms the second review found: an object argument that a letter in the
+    format hides from the line scrub, notes in every form a traceback shows,
+    every item of a secret field's list, a group's type, and `extra`."""
+
+    def test_an_object_right_after_a_letter_is_scrubbed_on_its_own(self):
+        param = "si" + "g="
+        self.assertEqual(r.render_log("ref%s", (Shown(param + "c0ffee" * 4),)), "ref" + param + "[redacted]")
+        self.assertEqual(r.render_log("x%s", (Shown("Bearer " + TOKEN),)), "xBearer [redacted]")
+        self.assertEqual(r.render_log("a%(v)s", ({"v": Shown(param + "c0ffee" * 4)},)), "a" + param + "[redacted]")
+        self.assertEqual(r.render_log("n=%d", (Decimal(4),)), "n=4", "a clean object still formats by type")
+
+    def assert_shows_nothing(self, error):
+        shown = "".join(traceback.format_exception(error))
+        self.assertNotIn(PAYLOAD[:24], shown)
+        return shown
+
+    def test_notes_in_any_form_a_traceback_shows_are_scrubbed(self):
+        for notes in ((f"while fetching {REF}",), [Shown(f"while fetching {REF}")]):
+            with self.subTest(notes=type(notes).__name__):
+                @r.scrub_raised()
+                def run():
+                    error = LookupError("refused")
+                    error.__notes__ = notes
+                    raise error
+
+                with self.assertRaises(LookupError) as caught:
+                    run()
+                self.assert_shows_nothing(caught.exception)
+                self.assertEqual(caught.exception.__notes__, ["while fetching mlr1.[redacted]"])
+
+    def test_a_chained_note_in_a_tuple_drops_the_chain(self):
+        @r.scrub_raised()
+        def run():
+            inner = OSError("clean")
+            inner.__notes__ = (f"at {REF}",)
+            raise LookupError("refused") from inner
+
+        with self.assertRaises(LookupError) as caught:
+            run()
+        self.assert_shows_nothing(caught.exception)
+        self.assertIsNone(caught.exception.__cause__)
+
+    @unittest.skipUnless(sys.version_info >= (3, 11), "exception groups are Python 3.11 and later")
+    def test_a_group_whose_member_leaks_keeps_its_type_name(self):
+        @r.scrub_raised()
+        def run():
+            raise ExceptionGroup("several", [ValueError(f"x {REF}"), KeyError("k")])  # noqa: F821
+
+        with self.assertRaises(r.ScrubbedError) as caught:
+            run()
+        self.assert_shows_nothing(caught.exception)
+        self.assertEqual(str(caught.exception), "ExceptionGroup: several (2 sub-exceptions)")
+
+    def test_every_item_of_a_list_value_is_withheld(self):
+        cases = {
+            f"{{'bearer_token': ['', '{TOKEN}']}}": "{'bearer_token': ['', '[redacted]']}",
+            f'{{"Authorization": ("Basic {TOKEN}", "Basic {TOKEN}")}}': '{"Authorization": ("[redacted]", "[redacted]")}',
+            f"{{'bearer_token': [b'{TOKEN}'], 'n': 1}}": "{'bearer_token': [b'[redacted]'], 'n': 1}",
+            f'{{\\"bearer_token\\": [\\"{TOKEN}\\", \\"{TOKEN}\\"]}}': '{\\"bearer_token\\": [\\"[redacted]\\", \\"[redacted]\\"]}',
+        }
+        for text, shown in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(r.scrub_text(text), shown)
+        for text in (f"bearer_token=['{TOKEN}', '{TOKEN}']", f"bearer_token = [ ( '{TOKEN}' ) ]"):
+            with self.subTest(text=text):
+                self.assertNotIn(TOKEN, r.scrub_text(text))
+        for plain in ("authorization: (optional)", "{'bearer_token': ['', None]}", "{'bearer_token': []}"):
+            with self.subTest(plain=plain):
+                self.assertEqual(r.scrub_text(plain), plain)
+
+    def test_extra_attributes_reach_the_record_scrubbed(self):
+        inner = logging.getLogger("monet-redact-extra")
+        with self.assertLogs("monet-redact-extra", level=logging.INFO) as logs:
+            r.ScrubbingLogger(inner).info("fetching", extra={"link": URL, "n": 2})
+        self.assertEqual(logs.records[0].link, "https://bucket.r2.example/loras/abc.safetensors?[redacted]")
+        self.assertEqual(logs.records[0].n, 2)
 
 
 if __name__ == "__main__":

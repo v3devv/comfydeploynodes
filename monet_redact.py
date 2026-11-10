@@ -27,7 +27,7 @@ import inspect
 import logging
 import re
 import traceback
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 REDACTED = "[redacted]"
 REDACTED_LORA_REF = "mlr1.[redacted]"
@@ -66,6 +66,11 @@ _BEARER = re.compile(r"(?i)(?<![a-z0-9_])(bearer[ \t]+)([A-Za-z0-9._~+/=-]{8,})"
 # item of a list or tuple value, as ComfyUI's `current_inputs` holds one.
 _SECRET_FIELD_TEXT = re.compile(
     r"""(?i)(\\?["']?)\b(bearer_token|authorization)\1(\s*[:=]\s*)([\[(]\s*)?(\\?["'])(.*?)\5""")
+# The same field holding a list or tuple, nested too: every quoted item in it,
+# not the first only, so `['', 'x']` and `('x', 'y')` show none of theirs.
+_SECRET_FIELD_ITEMS = re.compile(
+    r"""(?i)(\\?["']?)\b(bearer_token|authorization)\1(\s*[:=]\s*)((?:[\[(]\s*)+)([^\[\]()\r\n]*)""")
+_QUOTED_ITEM = re.compile(r"""(\\?["'])(.*?)\1""")
 
 # Keys whose value is withheld whole wherever it sits in a structure.
 SECRET_FIELDS = frozenset({"bearer_token", "authorization"})
@@ -95,6 +100,13 @@ def _field(match):
     return f"{key_quote}{name}{key_quote}{separator}{opener or ''}{value_quote}{REDACTED}{value_quote}"
 
 
+def _field_items(match):
+    key_quote, name, separator, openers, items = match.groups()
+    items = _QUOTED_ITEM.sub(
+        lambda m: m.group(0) if m.group(2) == "" else f"{m.group(1)}{REDACTED}{m.group(1)}", items)
+    return f"{key_quote}{name}{key_quote}{separator}{openers}{items}"
+
+
 def _as_text(value):
     if isinstance(value, str):
         return value
@@ -118,6 +130,7 @@ def scrub_text(text, withheld=()):
         text = _LORA_REF.sub(REDACTED_LORA_REF, text)
         # Fields first: `bearer_token=('x',)` would otherwise lose only its
         # `(` to the `token=` parameter rule below and keep the token.
+        text = _SECRET_FIELD_ITEMS.sub(_field_items, text)
         text = _SECRET_FIELD_TEXT.sub(_field, text)
         text = _URL.sub(_strip_signed_query, text)
         text = _PARAMETER_VALUE.sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", text)
@@ -207,8 +220,18 @@ def _message(exc):
 
 
 def _notes(exc):
-    notes = getattr(exc, "__notes__", None)
-    return [n for n in notes if isinstance(n, str)] if isinstance(notes, list) else []
+    """The notes a formatted traceback of `exc` shows, as `traceback` renders
+    them: any sequence but text item by item through `str`, anything else whole
+    through `repr`."""
+    try:
+        notes = getattr(exc, "__notes__", None)
+        if notes is None:
+            return []
+        if isinstance(notes, Sequence) and not isinstance(notes, (str, bytes)):
+            return [_as_text(n) for n in notes]
+        return [repr(notes)]
+    except Exception:  # noqa: BLE001, a traceback shows a placeholder instead
+        return []
 
 
 def _linked(exc):
@@ -262,11 +285,16 @@ def scrub_raised(*withheld_arguments):
                     clean = (scrub_text(message, withheld) if message is not None
                              else f"{type(exc).__name__}, its message withheld")
                     raise ScrubbedError(clean) from None
-                if any(leaks(note) for note in _notes(exc)):
-                    exc.__notes__ = [scrub_text(n, withheld) if isinstance(n, str) else n for n in exc.__notes__]
+                notes = _notes(exc)
+                if any(leaks(note) for note in notes):
+                    try:
+                        exc.__notes__ = [scrub_text(n, withheld) for n in notes]
+                    except Exception:  # noqa: BLE001, notes it cannot replace go with the error
+                        raise ScrubbedError(f"{type(exc).__name__}: {message}") from None
                 if any(leaks(_message(e)) or any(leaks(n) for n in _notes(e)) for e in _linked(exc)):
                     if _GROUP is not None and isinstance(exc, _GROUP):
-                        raise ScrubbedError(message) from None  # a group's members cannot be taken off it
+                        # A group's members cannot be taken off it; its type is kept by name.
+                        raise ScrubbedError(f"{type(exc).__name__}: {message}") from None
                     exc.__cause__ = None
                     exc.__context__ = None
                     exc.__suppress_context__ = True
@@ -277,14 +305,46 @@ def scrub_raised(*withheld_arguments):
     return decorate
 
 
+class _Shown:
+    """A log argument whose text carries a credential: `%s` shows its `str`
+    and `%r` its `repr`, each scrubbed on its own, since in the rendered line a
+    letter just before `%s` would hide the credential from the line scrub."""
+
+    __slots__ = ("text", "representation")
+
+    def __init__(self, text, representation):
+        self.text = text
+        self.representation = representation
+
+    def __str__(self):
+        return self.text
+
+    def __repr__(self):
+        return self.representation
+
+
+def _object_arg(value):
+    """`value` itself when neither `%s` nor `%r` (`%a` only escapes `%r`)
+    shows a credential, so `%d` or `%r` formats it as logging would; else a
+    `_Shown` of its scrubbed text."""
+    try:
+        text, representation = str(value), repr(value)
+    except Exception:  # noqa: BLE001
+        shown = scrub_text(value)
+        return _Shown(shown, shown)
+    clean_text, clean_representation = scrub_text(text), scrub_text(representation)
+    if clean_text == text and clean_representation == representation:
+        return value
+    return _Shown(clean_text, clean_representation)
+
+
 def _log_arg(value, keep_objects=False):
-    """A log argument scrubbed. With `keep_objects` any other value is kept as
-    it is, so `%d` or `%r` formats it as logging would; the rendered line is
-    scrubbed whole after formatting anyway. Without it (an attribute a logger
-    stores as given) it becomes its scrubbed text."""
+    """A log argument scrubbed. With `keep_objects` any other value goes
+    through `_object_arg`, for `%` to format. Without it (an attribute a
+    logger stores as given) it becomes its scrubbed text."""
     if value is None or isinstance(value, (bool, int, float, str, dict, list, tuple)):
         return scrub_value(value)
-    return value if keep_objects else scrub_text(value)
+    return _object_arg(value) if keep_objects else scrub_text(value)
 
 
 def render_log(msg, args):
@@ -298,7 +358,7 @@ def render_log(msg, args):
     text = msg if isinstance(msg, str) else _as_text(_log_arg(msg))
     if args:
         if isinstance(args, Mapping):
-            clean = _log_arg(dict(args))
+            clean = {k: _log_arg(v, keep_objects=True) for k, v in scrub_value(dict(args)).items()}
         else:
             clean = tuple(_log_arg(a, keep_objects=True) for a in args)
         try:
@@ -348,6 +408,8 @@ class ScrubbingLogger:
             text = f"{text}\n{_format_exc_info(exc_info)}"
         if isinstance(self._inner, logging.Logger):
             kwargs["stacklevel"] = kwargs.get("stacklevel", 1) + 2
+            if isinstance(kwargs.get("extra"), Mapping):  # record attributes a formatter may print
+                kwargs["extra"] = {k: _log_arg(v) for k, v in kwargs["extra"].items()}
         else:
             kwargs = {k: _log_arg(v) for k, v in kwargs.items()}
         return getattr(self._inner, level)(text, **kwargs)
