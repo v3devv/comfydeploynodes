@@ -1,0 +1,85 @@
+{
+  "about": "Contract C0 section 3. loraVolumeRelPath, the sidecar path, the R2 key and the grammar.",
+  "grammar": "^monet/[a-z0-9]{20,40}/[a-z0-9]{20,40}/[a-z0-9]{20,40}-[0-9a-f]{12}\\.safetensors$",
+  "derive": [
+    {
+      "input": {
+        "workspaceId": "cmws0fixture0000000000001",
+        "presetId": "cmpr0fixture0000000000001",
+        "id": "cmlv0fixture0000000000001",
+        "loraSha256": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a"
+      },
+      "relPath": "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+      "volumePath": "loras/monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+      "runnerPath": "/private_models/loras/monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+      "syncPath": "/vol/loras/monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+      "sidecarRelPath": "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.monet.json",
+      "r2Key": "cmws0fixture0000000000001/loras/cmpr0fixture0000000000001/cmlv0fixture0000000000001.safetensors"
+    }
+  ],
+  "deriveRefusals": [
+    {
+      "input": {
+        "workspaceId": "cmws0fixture0000000000001",
+        "presetId": "cmpr0fixture0000000000001",
+        "id": "cmlv0fixture0000000000001",
+        "loraSha256": "CCEA4A347C36022F763B7A905AB1C388078AA2B49B7BBEE332632AD810B80F3A"
+      },
+      "why": "sha256 not lowercase"
+    },
+    {
+      "input": {
+        "workspaceId": "cmws0fixture0000000000001",
+        "presetId": "cmpr0fixture0000000000001",
+        "id": "cmlv0fixture0000000000001",
+        "loraSha256": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3"
+      },
+      "why": "sha256 not 64 hex"
+    },
+    {
+      "input": {
+        "workspaceId": "CMWS0FIXTURE0000000000001",
+        "presetId": "cmpr0fixture0000000000001",
+        "id": "cmlv0fixture0000000000001",
+        "loraSha256": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a"
+      },
+      "why": "id not lowercase"
+    },
+    {
+      "input": {
+        "workspaceId": "cmws-fixture-0000000000001",
+        "presetId": "cmpr0fixture0000000000001",
+        "id": "cmlv0fixture0000000000001",
+        "loraSha256": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a"
+      },
+      "why": "id has a hyphen"
+    },
+    {
+      "input": {
+        "workspaceId": "cmws0short",
+        "presetId": "cmpr0fixture0000000000001",
+        "id": "cmlv0fixture0000000000001",
+        "loraSha256": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a"
+      },
+      "why": "id under 20 characters"
+    }
+  ],
+  "accept": [
+    "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+    "monet/aaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/ccccccccccccccccccccccccc-0123456789ab.safetensors"
+  ],
+  "reject": [
+    "loras/monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+    "/monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+    "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.ckpt",
+    "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.monet.json",
+    "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001.safetensors",
+    "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-CCEA4A347C36.safetensors",
+    "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c3.safetensors",
+    "monet/cmws0fixture0000000000001/../cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+    "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/sub/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+    "Monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+    "monet/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+    "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors\n"
+  ]
+}

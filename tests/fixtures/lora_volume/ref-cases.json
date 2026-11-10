@@ -1,0 +1,553 @@
+{
+  "about": "Contract C0 section 5. Every reader runs every case: Monet readLoraRunRef(ref, key, nowUnix), Deploy verify_lora_ref(ref, secret=key, deployment_id=, now=), the node parse_lora_ref(ref). expect is ok or the reason code. Where expect is ok and claims is present, the reader returns exactly those claims. The keys here are published fixture values.",
+  "constants": {
+    "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+    "otherKey": "golden-fixture-other-hmac-key-not-for-production-use-111111111111",
+    "shortKey": "golden-fixture-short-hmac-key31",
+    "nowUnix": 1794312000,
+    "ttlSeconds": 7200,
+    "skewSeconds": 300,
+    "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f",
+    "otherDeploymentId": "15e79589-12c9-453c-a41a-348fdd7de957"
+  },
+  "mint": {
+    "about": "Monet mintLoraRunRef(claims, key) must return exactly ref, byte for byte.",
+    "claims": {
+      "p": "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+      "h": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a",
+      "n": 186646528,
+      "d": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f",
+      "e": 1794319200,
+      "u": "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/monet-private/cmws0fixture0000000000001/loras/cmpr0fixture0000000000001/cmlv0fixture0000000000001.safetensors?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=FIXTUREKEYID%2F20261110%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261110T120000Z&X-Amz-Expires=2700&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+    "canonicalPayload": "{\"p\":\"monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors\",\"h\":\"ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a\",\"n\":186646528,\"d\":\"0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f\",\"e\":1794319200,\"u\":\"https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/monet-private/cmws0fixture0000000000001/loras/cmpr0fixture0000000000001/cmlv0fixture0000000000001.safetensors?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=FIXTUREKEYID%2F20261110%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261110T120000Z&X-Amz-Expires=2700&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000\"}",
+    "payloadSegment": "eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0",
+    "signatureSegment": "pD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU",
+    "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.pD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU"
+  },
+  "mintRefusals": [
+    {
+      "name": "short_key",
+      "claims": {
+        "p": "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+        "h": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a",
+        "n": 186646528,
+        "d": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f",
+        "e": 1794319200,
+        "u": "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/monet-private/cmws0fixture0000000000001/loras/cmpr0fixture0000000000001/cmlv0fixture0000000000001.safetensors?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=FIXTUREKEYID%2F20261110%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261110T120000Z&X-Amz-Expires=2700&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "key": "golden-fixture-short-hmac-key31",
+      "expect": "key"
+    },
+    {
+      "name": "foreign_path",
+      "claims": {
+        "p": "other/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+        "h": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a",
+        "n": 186646528,
+        "d": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f",
+        "e": 1794319200,
+        "u": "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/monet-private/cmws0fixture0000000000001/loras/cmpr0fixture0000000000001/cmlv0fixture0000000000001.safetensors?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=FIXTUREKEYID%2F20261110%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261110T120000Z&X-Amz-Expires=2700&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+      "expect": "claims"
+    },
+    {
+      "name": "non_ascii",
+      "claims": {
+        "p": "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+        "h": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a",
+        "n": 186646528,
+        "d": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f",
+        "e": 1794319200,
+        "u": "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/monet-private/cmws0fixture0000000000001/loras/cmpr0fixture0000000000001/cmlv0fixture0000000000001.safetensors?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=FIXTUREK\u00c9YID%2F20261110%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261110T120000Z&X-Amz-Expires=2700&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+      "expect": "claims"
+    },
+    {
+      "name": "extra_claim",
+      "claims": {
+        "p": "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+        "h": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a",
+        "n": 186646528,
+        "d": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f",
+        "e": 1794319200,
+        "u": "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/monet-private/cmws0fixture0000000000001/loras/cmpr0fixture0000000000001/cmlv0fixture0000000000001.safetensors?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=FIXTUREKEYID%2F20261110%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261110T120000Z&X-Amz-Expires=2700&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000",
+        "x": 1
+      },
+      "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+      "expect": "claims"
+    }
+  ],
+  "cases": [
+    {
+      "name": "valid",
+      "note": "A fresh reference minted 2 hours before expiry. Every reader accepts it and returns these claims.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.pD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "ok",
+        "deploy": "ok",
+        "node": "ok"
+      },
+      "claims": {
+        "p": "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+        "h": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a",
+        "n": 186646528,
+        "d": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f",
+        "e": 1794319200,
+        "u": "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/monet-private/cmws0fixture0000000000001/loras/cmpr0fixture0000000000001/cmlv0fixture0000000000001.safetensors?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=FIXTUREKEYID%2F20261110%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261110T120000Z&X-Amz-Expires=2700&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "name": "valid_last_second",
+      "note": "nowUnix is e minus 1: still valid.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.pD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794319199,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "ok",
+        "deploy": "ok",
+        "node": "ok"
+      },
+      "claims": {
+        "p": "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+        "h": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a",
+        "n": 186646528,
+        "d": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f",
+        "e": 1794319200,
+        "u": "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/monet-private/cmws0fixture0000000000001/loras/cmpr0fixture0000000000001/cmlv0fixture0000000000001.safetensors?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=FIXTUREKEYID%2F20261110%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261110T120000Z&X-Amz-Expires=2700&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "name": "expired_at_e",
+      "note": "nowUnix equals e: expired. Valid means nowUnix < e. The node never checks expiry.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.pD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794319200,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "expired",
+        "deploy": "expired",
+        "node": "ok"
+      }
+    },
+    {
+      "name": "expired_later",
+      "note": "An hour past expiry.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.pD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794322800,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "expired",
+        "deploy": "expired",
+        "node": "ok"
+      }
+    },
+    {
+      "name": "wrong_key",
+      "note": "Verified with a different key. The node holds no key, so it only checks shape.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.pD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU",
+      "verify": {
+        "key": "golden-fixture-other-hmac-key-not-for-production-use-111111111111",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "signature",
+        "deploy": "signature",
+        "node": "ok"
+      }
+    },
+    {
+      "name": "tampered_payload",
+      "note": "The payload was re encoded with a different size and the old signature kept.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjksImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.pD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "signature",
+        "deploy": "signature",
+        "node": "ok"
+      }
+    },
+    {
+      "name": "tampered_signature",
+      "note": "One signature character changed. Still canonical base64url, so the failure is the MAC, not the shape.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.AD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "signature",
+        "deploy": "signature",
+        "node": "ok"
+      }
+    },
+    {
+      "name": "wrong_deployment",
+      "note": "A valid reference queued on another deployment. Only Deploy knows the run's deployment; Monet's reader returns the claims.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.pD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "15e79589-12c9-453c-a41a-348fdd7de957"
+      },
+      "expect": {
+        "monet": "ok",
+        "deploy": "deployment",
+        "node": "ok"
+      },
+      "claims": {
+        "p": "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+        "h": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a",
+        "n": 186646528,
+        "d": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f",
+        "e": 1794319200,
+        "u": "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/monet-private/cmws0fixture0000000000001/loras/cmpr0fixture0000000000001/cmlv0fixture0000000000001.safetensors?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=FIXTUREKEYID%2F20261110%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261110T120000Z&X-Amz-Expires=2700&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "name": "lifetime_at_limit",
+      "note": "e minus nowUnix is 7500, the most a reader accepts (7200 plus 300 seconds of clock skew).",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5NTAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.XKV4jGEgJMc0Q9Efm_gWFqBembmNi_AlVnmYe8nEskk",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "ok",
+        "deploy": "ok",
+        "node": "ok"
+      },
+      "claims": {
+        "p": "monet/cmws0fixture0000000000001/cmpr0fixture0000000000001/cmlv0fixture0000000000001-ccea4a347c36.safetensors",
+        "h": "ccea4a347c36022f763b7a905ab1c388078aa2b49b7bbee332632ad810b80f3a",
+        "n": 186646528,
+        "d": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f",
+        "e": 1794319500,
+        "u": "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/monet-private/cmws0fixture0000000000001/loras/cmpr0fixture0000000000001/cmlv0fixture0000000000001.safetensors?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=FIXTUREKEYID%2F20261110%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261110T120000Z&X-Amz-Expires=2700&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "name": "lifetime_too_long",
+      "note": "e minus nowUnix is 7501: refused even though the signature is good.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5NTAxLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.1IRX-ZbVs93F60zycJFwPmNN2TKeMW46IfOXy4nix1s",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "lifetime",
+        "deploy": "lifetime",
+        "node": "ok"
+      }
+    },
+    {
+      "name": "foreign_root_signed",
+      "note": "Signed, but p is outside the monet/ grammar.",
+      "ref": "mlr1.eyJwIjoib3RoZXIvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.m8IFo5OlQkbdI29PdTLX0aKUTjPcWCt3gLhzgYq6MlA",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "path",
+        "deploy": "path",
+        "node": "path"
+      }
+    },
+    {
+      "name": "traversal_signed",
+      "note": "Signed, but p carries a parent segment.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS8uLi9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.Bi5CPZcHZS4-RbyQI0_LxcL-dE5P_SMSyQmOhTsTUP0",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "path",
+        "deploy": "path",
+        "node": "path"
+      }
+    },
+    {
+      "name": "sha12_mismatch_signed",
+      "note": "Signed, but the 12 hex in p are not the first 12 of h.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtMDhkYTAzZGE5NmMwLnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.tJr0UeKYexvPhkbEm-EyEhxUqKvvLTedgoh4JzsKe50",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "path",
+        "deploy": "path",
+        "node": "path"
+      }
+    },
+    {
+      "name": "extra_key_signed",
+      "note": "Signed payload with a seventh key.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIiwieCI6MX0.nVSJ7n9SN00kFndwT42egL90PBzj__QsoRxfvCKLP4Y",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "whitespace_signed",
+      "note": "Signed payload with a space: not the canonical serialization.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjogMTg2NjQ2NTI4LCJkIjoiMGI2YzNmNmUtNWExZC00YzJlLTlmM2EtN2Q4ZTljMGIxYTJmIiwiZSI6MTc5NDMxOTIwMCwidSI6Imh0dHBzOi8vMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYucjIuY2xvdWRmbGFyZXN0b3JhZ2UuY29tL21vbmV0LXByaXZhdGUvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9sb3Jhcy9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEuc2FmZXRlbnNvcnM_WC1BbXotQWxnb3JpdGhtPUFXUzQtSE1BQy1TSEEyNTYmWC1BbXotQ3JlZGVudGlhbD1GSVhUVVJFS0VZSUQlMkYyMDI2MTExMCUyRmF1dG8lMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjYxMTEwVDEyMDAwMFomWC1BbXotRXhwaXJlcz0yNzAwJlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCZYLUFtei1TaWduYXR1cmU9MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMCJ9.cwwmG-WT8nL8349m-0Jj9Y4O_w6BfhaadmXRAy25IlQ",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "key_order_signed",
+      "note": "Signed payload with keys out of the order p, h, n, d, e, u.",
+      "ref": "mlr1.eyJoIjoiY2NlYTRhMzQ3YzM2MDIyZjc2M2I3YTkwNWFiMWMzODgwNzhhYTJiNDliN2JiZWUzMzI2MzJhZDgxMGI4MGYzYSIsInAiOiJtb25ldC9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS1jY2VhNGEzNDdjMzYuc2FmZXRlbnNvcnMiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.kmRGmXrN2hjlxrnsLKsLCWdt65CdxbLHS8L4-Rb8j6c",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "uppercase_hash_signed",
+      "note": "h must be 64 lowercase hex.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6IkNDRUE0QTM0N0MzNjAyMkY3NjNCN0E5MDVBQjFDMzg4MDc4QUEyQjQ5QjdCQkVFMzMyNjMyQUQ4MTBCODBGM0EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.vHBoVgbbrWsina4vvIcyK8uoIKVHdJs0B0X7TdSLom8",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "size_below_min_signed",
+      "note": "n below 16384.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxNjM4MywiZCI6IjBiNmMzZjZlLTVhMWQtNGMyZS05ZjNhLTdkOGU5YzBiMWEyZiIsImUiOjE3OTQzMTkyMDAsInUiOiJodHRwczovLzAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmLnIyLmNsb3VkZmxhcmVzdG9yYWdlLmNvbS9tb25ldC1wcml2YXRlL2Ntd3MwZml4dHVyZTAwMDAwMDAwMDAwMDEvbG9yYXMvY21wcjBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbWx2MGZpeHR1cmUwMDAwMDAwMDAwMDAxLnNhZmV0ZW5zb3JzP1gtQW16LUFsZ29yaXRobT1BV1M0LUhNQUMtU0hBMjU2JlgtQW16LUNyZWRlbnRpYWw9RklYVFVSRUtFWUlEJTJGMjAyNjExMTAlMkZhdXRvJTJGczMlMkZhd3M0X3JlcXVlc3QmWC1BbXotRGF0ZT0yMDI2MTExMFQxMjAwMDBaJlgtQW16LUV4cGlyZXM9MjcwMCZYLUFtei1TaWduZWRIZWFkZXJzPWhvc3QmWC1BbXotU2lnbmF0dXJlPTAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAifQ.teh0038WgQDpKBZeNc8h2f4w4WpLMeao6n7PyAqUC24",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "size_above_max_signed",
+      "note": "n above 629145600 (600 MiB, LORA_MAX_BYTES).",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjo2MjkxNDU2MDEsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.Yh99BziETM531tf3c5u6wVL7kURejCf7EkYJbyflJko",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "deployment_uppercase_signed",
+      "note": "d must be a lowercase canonical uuid.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwQjZDM0Y2RS01QTFELTRDMkUtOUYzQS03RDhFOUMwQjFBMkYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.COJhTebI8k8iDcuKxceXYQci096wfqcORMjQBelatNo",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "http_source_signed",
+      "note": "u must be https.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cDovLzAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmLnIyLmNsb3VkZmxhcmVzdG9yYWdlLmNvbS9tb25ldC1wcml2YXRlL2Ntd3MwZml4dHVyZTAwMDAwMDAwMDAwMDEvbG9yYXMvY21wcjBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbWx2MGZpeHR1cmUwMDAwMDAwMDAwMDAxLnNhZmV0ZW5zb3JzP1gtQW16LUFsZ29yaXRobT1BV1M0LUhNQUMtU0hBMjU2JlgtQW16LUNyZWRlbnRpYWw9RklYVFVSRUtFWUlEJTJGMjAyNjExMTAlMkZhdXRvJTJGczMlMkZhd3M0X3JlcXVlc3QmWC1BbXotRGF0ZT0yMDI2MTExMFQxMjAwMDBaJlgtQW16LUV4cGlyZXM9MjcwMCZYLUFtei1TaWduZWRIZWFkZXJzPWhvc3QmWC1BbXotU2lnbmF0dXJlPTAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAifQ.EzTD_N3WESsoiJUZqxkQvrbHXXzk2pCX2nKAbscpFwo",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "float_expiry_signed",
+      "note": "e must be an integer.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLjUsInUiOiJodHRwczovLzAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmLnIyLmNsb3VkZmxhcmVzdG9yYWdlLmNvbS9tb25ldC1wcml2YXRlL2Ntd3MwZml4dHVyZTAwMDAwMDAwMDAwMDEvbG9yYXMvY21wcjBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbWx2MGZpeHR1cmUwMDAwMDAwMDAwMDAxLnNhZmV0ZW5zb3JzP1gtQW16LUFsZ29yaXRobT1BV1M0LUhNQUMtU0hBMjU2JlgtQW16LUNyZWRlbnRpYWw9RklYVFVSRUtFWUlEJTJGMjAyNjExMTAlMkZhdXRvJTJGczMlMkZhd3M0X3JlcXVlc3QmWC1BbXotRGF0ZT0yMDI2MTExMFQxMjAwMDBaJlgtQW16LUV4cGlyZXM9MjcwMCZYLUFtei1TaWduZWRIZWFkZXJzPWhvc3QmWC1BbXotU2lnbmF0dXJlPTAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAifQ.0Uywo_qFh02NcE6Vyv3PrH3T9UL0IIlmYvUE8oRsKzI",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "non_ascii_signed",
+      "note": "The payload must be ASCII.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLw4lZSUQlMkYyMDI2MTExMCUyRmF1dG8lMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjYxMTEwVDEyMDAwMFomWC1BbXotRXhwaXJlcz0yNzAwJlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCZYLUFtei1TaWduYXR1cmU9MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMCJ9.UvbAtEfa5f8PNtLWVK8Jjdtlzlo-thloM8ahngwa578",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "bad_prefix",
+      "note": "Wrong version prefix.",
+      "ref": "mlr2.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.pD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "two_segments",
+      "note": "No signature segment.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "padded_payload",
+      "note": "Base64url padding is not allowed.",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0=.pD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "empty",
+      "note": "Empty string.",
+      "ref": "",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "plain_url",
+      "note": "A URL is not a reference; the run gate decides URLs separately.",
+      "ref": "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com/monet-private/cmws0fixture0000000000001/loras/cmpr0fixture0000000000001/cmlv0fixture0000000000001.safetensors?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=FIXTUREKEYID%2F20261110%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261110T120000Z&X-Amz-Expires=2700&X-Amz-SignedHeaders=host&X-Amz-Signature=0000000000000000000000000000000000000000000000000000000000000000",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
+      "name": "too_long",
+      "note": "Longer than 4096 characters.",
+      "ref": "mlr1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.pD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    }
+  ]
+}

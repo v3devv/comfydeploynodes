@@ -1,223 +1,181 @@
-"""The External Lora node must never save an error page as a LoRA.
+"""The External Lora node in URL mode must never save an error page as a LoRA.
 
 Run from the fork root, with nothing but the standard library:
 
     python3 -m unittest discover -s tests -v
 
 No ComfyUI install and no network are needed: `folder_paths` and `requests`
-are replaced by small fakes before the node module loads.
+are replaced by small fakes before the node module loads (tests/lora_harness.py).
 
-The bug this guards: the node wrote `response.content` to the loras folder
-without looking at the status. An expired presigned link answers 403 with an
-XML body, that body was saved under the LoRA's name, and the run then failed
-later with a safetensors parse error that pointed nowhere near the cause.
+The bug this guards (NF1): the node wrote `response.content` to the loras
+folder without looking at the status. An expired presigned link answers 403
+with an XML body, that body was saved under the LoRA's name, and the run then
+failed later with a safetensors parse error that pointed nowhere near the cause.
+
+URL mode (contract C-NODE step 3): a plain http(s) value is accepted only while
+MONET_LORA_ALLOW_URL is unset or exactly "1". It downloads into the run cache
+as url/{uuid hex}.safetensors, never into the read only LoRA volume and never
+under lora_save_name.
 """
 
-import contextlib
-import importlib.util
-import io
-import json
 import os
-import shutil
-import struct
-import sys
-import tempfile
-import types
+import re
 import unittest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-NODE_PATH = os.path.join(ROOT, "comfy-nodes", "external_lora.py")
+from lora_harness import (
+    SIG_MARKER,
+    URL,
+    FakeResponse,
+    LoraTestCase,
+    ok_response,
+    safetensors_bytes,
+)
 
-# The query string of a presigned link. It must never reach a log or an error.
-SIG_MARKER = "X-Amz-Signature=" + "deadbeef" + "cafe"
-URL = "https://bucket.r2.example/loras/abc.safetensors?" + SIG_MARKER
-
-
-def safetensors_bytes(payload_size=64 * 1024):
-    header = json.dumps(
-        {"w": {"dtype": "F32", "shape": [payload_size // 4], "data_offsets": [0, payload_size]}}
-    ).encode()
-    return struct.pack("<Q", len(header)) + header + b"\0" * payload_size
+URL_NAME = re.compile(r"url/[0-9a-f]{32}\.safetensors")
 
 
-class FakeResponse:
-    def __init__(self, status, body, headers=None, fail_after=None):
-        self.status_code = status
-        self._body = body
-        self.headers = dict(headers or {})
-        self._fail_after = fail_after
-        self.closed = False
+class UrlModeCase(LoraTestCase):
+    def run_url(self, **kw):
+        return self.run_node(URL, **kw)
 
-    @property
-    def content(self):
-        return self._body
+    def assert_nothing_kept(self):
+        self.assertEqual(self.files_under(self.cache_dir), [], "a partial or bad file was left in the cache")
+        self.assertEqual(self.files_under(self.volume_dir), [], "the volume is read only")
 
-    def iter_content(self, chunk_size=1):
-        sent = 0
-        for i in range(0, len(self._body), chunk_size):
-            if self._fail_after is not None and sent >= self._fail_after:
-                raise ConnectionError("connection reset by peer")
-            chunk = self._body[i : i + chunk_size]
-            sent += len(chunk)
-            yield chunk
-
-    def close(self):
-        self.closed = True
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
-        return False
-
-
-class NodeTestCase(unittest.TestCase):
-    def setUp(self):
-        self.lora_dir = tempfile.mkdtemp(prefix="extlora-")
-        self.addCleanup(shutil.rmtree, self.lora_dir, True)
-
-        folder_paths = types.ModuleType("folder_paths")
-        folder_paths.folder_names_and_paths = {"loras": ([self.lora_dir], set())}
-        folder_paths.get_filename_list = lambda name: sorted(
-            f for f in os.listdir(self.lora_dir) if f.endswith(".safetensors")
-        )
-        self.response = None
-        self.calls = []
-
-        fake_requests = types.ModuleType("requests")
-
-        def get(url, **kwargs):
-            self.calls.append((url, kwargs))
-            return self.response
-
-        fake_requests.get = get
-
-        patched = {"folder_paths": folder_paths, "requests": fake_requests}
-        saved = {k: sys.modules.get(k) for k in patched}
-        sys.modules.update(patched)
-
-        def restore():
-            for k, v in saved.items():
-                if v is None:
-                    sys.modules.pop(k, None)
-                else:
-                    sys.modules[k] = v
-
-        self.addCleanup(restore)
-
-        spec = importlib.util.spec_from_file_location("external_lora_under_test", NODE_PATH)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        self.node = module.ComfyUIDeployExternalLora()
-
-    def run_node(self, name="trained.safetensors"):
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            try:
-                result = self.node.run("input_lora", lora_save_name=name, lora_url=URL)
-                error = None
-            except Exception as exc:  # noqa: BLE001, the test inspects it
-                result, error = None, exc
-        return result, error, out.getvalue()
-
-    def assert_folder_empty(self):
-        self.assertEqual(os.listdir(self.lora_dir), [], "a partial or bad file was left in the loras folder")
-
-    def assert_refused(self, error, logs, *must_mention):
+    def assert_refused(self, error, *must_mention):
         self.assertIsNotNone(error, "the node accepted a response that is not a LoRA")
         message = str(error)
         for fragment in must_mention:
             self.assertIn(fragment, message)
         self.assertNotIn(SIG_MARKER, message, "the presigned URL leaked into the error")
-        self.assertNotIn(SIG_MARKER, logs, "the presigned URL leaked into the logs")
-        self.assert_folder_empty()
+        self.assertIsNone(error.__cause__)
+        self.assert_nothing_kept()
 
 
-class RefusesBadResponses(NodeTestCase):
+class RefusesBadResponses(UrlModeCase):
     def test_expired_presigned_link_403(self):
         body = b'<?xml version="1.0"?><Error><Code>AccessDenied</Code><Message>Request has expired</Message></Error>'
-        self.response = FakeResponse(403, body, {"Content-Type": "application/xml", "Content-Length": str(len(body))})
-        _, error, logs = self.run_node()
-        self.assert_refused(error, logs, "HTTP 403")
+        self.responses = [FakeResponse(403, body, {"Content-Type": "application/xml", "Content-Length": str(len(body))})]
+        _, error, _ = self.run_url()
+        self.assert_refused(error, "HTTP 403")
 
     def test_not_found_404(self):
-        self.response = FakeResponse(404, b"Not Found", {"Content-Length": "9"})
-        _, error, logs = self.run_node()
-        self.assert_refused(error, logs, "HTTP 404")
+        self.responses = [FakeResponse(404, b"Not Found", {"Content-Length": "9"})]
+        _, error, _ = self.run_url()
+        self.assert_refused(error, "HTTP 404")
 
     def test_server_error_500(self):
-        self.response = FakeResponse(500, b"oops")
-        _, error, logs = self.run_node()
-        self.assert_refused(error, logs, "HTTP 500")
+        self.responses = [FakeResponse(500, b"oops")]
+        _, error, _ = self.run_url()
+        self.assert_refused(error, "HTTP 500")
 
     def test_200_with_a_tiny_body_is_not_a_lora(self):
         body = b"<html>please sign in</html>"
-        self.response = FakeResponse(200, body, {"Content-Length": str(len(body))})
-        _, error, logs = self.run_node()
-        self.assert_refused(error, logs, "bytes")
+        self.responses = [FakeResponse(200, body, {"Content-Length": str(len(body))})]
+        _, error, _ = self.run_url()
+        self.assert_refused(error, "bytes")
 
     def test_200_without_a_safetensors_header(self):
         body = b"<html>" + b"x" * 8192 + b"</html>"
-        self.response = FakeResponse(200, body, {"Content-Length": str(len(body))})
-        _, error, logs = self.run_node()
-        self.assert_refused(error, logs, "safetensors")
+        self.responses = [FakeResponse(200, body, {"Content-Length": str(len(body))})]
+        _, error, _ = self.run_url()
+        self.assert_refused(error, "safetensors")
 
     def test_body_shorter_than_content_length(self):
         body = safetensors_bytes()
-        self.response = FakeResponse(200, body, {"Content-Length": str(len(body) + 1000)})
-        _, error, logs = self.run_node()
-        self.assert_refused(error, logs, "ended early")
+        self.responses = [FakeResponse(200, body, {"Content-Length": str(len(body) + 1000)})]
+        _, error, _ = self.run_url()
+        self.assert_refused(error, "ended early")
 
     def test_connection_dies_mid_download(self):
         body = safetensors_bytes(1 << 20)
-        self.response = FakeResponse(200, body, {"Content-Length": str(len(body))}, fail_after=65536)
-        _, error, logs = self.run_node()
-        self.assert_refused(error, logs)
+        self.responses = [FakeResponse(200, body, {"Content-Length": str(len(body))}, fail_after=65536)]
+        _, error, _ = self.run_url()
+        self.assert_refused(error)
 
-    def test_a_failed_download_never_shadows_a_later_good_one(self):
-        # The old code left the error page under the final name, and the next
-        # run then took the early "already present" branch and reused it.
-        self.response = FakeResponse(403, b"<Error>expired</Error>")
-        self.run_node()
-        good = safetensors_bytes()
-        self.response = FakeResponse(200, good, {"Content-Length": str(len(good))})
-        result, error, _ = self.run_node()
-        self.assertIsNone(error)
-        self.assertEqual(result, ("trained.safetensors",))
-        with open(os.path.join(self.lora_dir, "trained.safetensors"), "rb") as f:
-            self.assertEqual(f.read(), good)
+    def test_a_connect_error_never_carries_the_link(self):
+        # requests puts the full URL, query string included, in its exception
+        # text. The node must not pass that text on.
+        self.responses = [ConnectionError(f"Max retries exceeded with url: {URL}")]
+        _, error, _ = self.run_url()
+        self.assertIsInstance(error, self.module.LoraDownloadError)
+        self.assert_refused(error, "ConnectionError")
+        self.assertTrue(error.__suppress_context__ or error.__context__ is None)
 
 
-class AcceptsGoodResponses(NodeTestCase):
-    def test_good_download_lands_whole_under_the_final_name(self):
+class AcceptsGoodResponses(UrlModeCase):
+    def test_good_download_lands_whole_in_the_cache(self):
         good = safetensors_bytes(1 << 20)
-        self.response = FakeResponse(200, good, {"Content-Length": str(len(good))})
-        result, error, logs = self.run_node()
+        self.responses = [ok_response(good)]
+        result, error, logs = self.run_url()
         self.assertIsNone(error)
-        self.assertEqual(result, ("trained.safetensors",))
-        self.assertEqual(os.listdir(self.lora_dir), ["trained.safetensors"], "the temp file was not renamed away")
-        with open(os.path.join(self.lora_dir, "trained.safetensors"), "rb") as f:
-            self.assertEqual(f.read(), good)
-        self.assertNotIn(SIG_MARKER, logs, "the presigned URL leaked into the logs")
+        self.assertEqual(len(result), 1)
+        name = result[0]
+        self.assertRegex(name, URL_NAME)
+        self.assertEqual(self.files_under(self.cache_dir), [name], "the temp file was not renamed away")
+        self.assertEqual(self.read(self.cache_dir, name), good)
+        self.assertEqual(self.files_under(self.volume_dir), [], "URL mode never writes the volume")
+        self.assert_resolves_to(name, self.cache_dir)
         _, kwargs = self.calls[0]
         self.assertTrue(kwargs.get("stream"), "the body should stream to disk, not sit in memory")
         self.assertIsNotNone(kwargs.get("timeout"), "a stalled link must not hang the run forever")
 
     def test_good_download_without_content_length(self):
         good = safetensors_bytes()
-        self.response = FakeResponse(200, good)
-        result, error, _ = self.run_node()
+        self.responses = [FakeResponse(200, good)]
+        result, error, _ = self.run_url()
         self.assertIsNone(error)
-        self.assertEqual(result, ("trained.safetensors",))
+        self.assertRegex(result[0], URL_NAME)
 
-    def test_existing_lora_is_reused_without_a_request(self):
-        with open(os.path.join(self.lora_dir, "trained.safetensors"), "wb") as f:
-            f.write(safetensors_bytes())
-        result, error, _ = self.run_node()
+    def test_each_download_gets_its_own_name(self):
+        good = safetensors_bytes()
+        self.responses = [ok_response(good), ok_response(good)]
+        first, _, _ = self.run_url()
+        second, _, _ = self.run_url()
+        self.assertNotEqual(first, second)
+
+    def test_bearer_token_is_sent_and_never_logged(self):
+        good = safetensors_bytes()
+        self.responses = [ok_response(good)]
+        _, error, logs = self.run_url(bearer="secret-bearer-value")
         self.assertIsNone(error)
-        self.assertEqual(result, ("trained.safetensors",))
+        _, kwargs = self.calls[0]
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer secret-bearer-value")
+        self.assertNotIn("secret-bearer-value", logs)
+
+
+class UrlModeGate(UrlModeCase):
+    def test_unset_allows_urls(self):
+        os.environ.pop("MONET_LORA_ALLOW_URL", None)
+        self.responses = [ok_response(safetensors_bytes())]
+        result, error, _ = self.run_url()
+        self.assertIsNone(error)
+        self.assertRegex(result[0], URL_NAME)
+
+    def test_one_allows_urls(self):
+        os.environ["MONET_LORA_ALLOW_URL"] = "1"
+        self.responses = [ok_response(safetensors_bytes())]
+        result, error, _ = self.run_node("http://bucket.example/a.safetensors")
+        self.assertIsNone(error)
+        self.assertRegex(result[0], URL_NAME)
+
+    def test_zero_and_any_other_value_refuse_urls(self):
+        for value in ("0", "", "true", "yes", " 1", "1 ", "01"):
+            with self.subTest(value=value):
+                os.environ["MONET_LORA_ALLOW_URL"] = value
+                self.responses = [ok_response(safetensors_bytes())]
+                _, error, _ = self.run_url()
+                self.assertIsInstance(error, self.module.LoraRefError)
+                self.assertEqual(error.code, "not_a_ref")
+                self.assertEqual(self.calls, [])
+                self.assert_nothing_kept()
+
+    def test_lora_save_name_is_refused(self):
+        self.responses = [ok_response(safetensors_bytes())]
+        _, error, _ = self.run_url(save_name="trained.safetensors")
+        self.assertIsInstance(error, self.module.LoraRefError)
         self.assertEqual(self.calls, [])
+        self.assert_nothing_kept()
 
 
 if __name__ == "__main__":
