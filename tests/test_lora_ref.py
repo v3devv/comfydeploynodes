@@ -29,7 +29,7 @@ class FixtureRefCases(LoraTestCase):
     def test_every_fixture_case_gets_the_node_answer(self):
         data = load_fixture("ref-cases.json")
         cases = data["cases"]
-        self.assertEqual(len(cases), 29, "the fixture should hold 29 verification cases")
+        self.assertEqual(len(cases), 31, "the fixture should hold 31 verification cases")
         for case in cases:
             with self.subTest(case=case["name"]):
                 expect = case["expect"]["node"]

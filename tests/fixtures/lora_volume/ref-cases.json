@@ -460,6 +460,36 @@
       }
     },
     {
+      "name": "unicode_escape_signed",
+      "note": "Signed, and p carries a \\u escape of a non ASCII character (e acute). All three readers refuse, with different codes: JavaScript's JSON.stringify writes the character raw, so Monet's step 4 re-serialisation fails first (shape); Python's ensure_ascii writes the escape back, so Deploy and the node reach step 5 (path).",
+      "ref": "mlr1.eyJwIjoibW9uZXQvY213c1x1MDBlOWZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS1jY2VhNGEzNDdjMzYuc2FmZXRlbnNvcnMiLCJoIjoiY2NlYTRhMzQ3YzM2MDIyZjc2M2I3YTkwNWFiMWMzODgwNzhhYTJiNDliN2JiZWUzMzI2MzJhZDgxMGI4MGYzYSIsIm4iOjE4NjY0NjUyOCwiZCI6IjBiNmMzZjZlLTVhMWQtNGMyZS05ZjNhLTdkOGU5YzBiMWEyZiIsImUiOjE3OTQzMTkyMDAsInUiOiJodHRwczovLzAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmLnIyLmNsb3VkZmxhcmVzdG9yYWdlLmNvbS9tb25ldC1wcml2YXRlL2Ntd3MwZml4dHVyZTAwMDAwMDAwMDAwMDEvbG9yYXMvY21wcjBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbWx2MGZpeHR1cmUwMDAwMDAwMDAwMDAxLnNhZmV0ZW5zb3JzP1gtQW16LUFsZ29yaXRobT1BV1M0LUhNQUMtU0hBMjU2JlgtQW16LUNyZWRlbnRpYWw9RklYVFVSRUtFWUlEJTJGMjAyNjExMTAlMkZhdXRvJTJGczMlMkZhd3M0X3JlcXVlc3QmWC1BbXotRGF0ZT0yMDI2MTExMFQxMjAwMDBaJlgtQW16LUV4cGlyZXM9MjcwMCZYLUFtei1TaWduZWRIZWFkZXJzPWhvc3QmWC1BbXotU2lnbmF0dXJlPTAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAifQ.twbp47sAPkTov7G5bTZr6fZeL2BlubRqKVunqhUuSs0",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "path",
+        "node": "path"
+      }
+    },
+    {
+      "name": "noncanonical_bad_path_signed",
+      "note": "Signed, with a space in the payload AND p outside the monet/ grammar. Step 4 (canonical bytes) runs before step 5 (path) in every reader, so all three answer shape, never path.",
+      "ref": "mlr1.eyJwIjoib3RoZXIvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjogMTg2NjQ2NTI4LCJkIjoiMGI2YzNmNmUtNWExZC00YzJlLTlmM2EtN2Q4ZTljMGIxYTJmIiwiZSI6MTc5NDMxOTIwMCwidSI6Imh0dHBzOi8vMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYucjIuY2xvdWRmbGFyZXN0b3JhZ2UuY29tL21vbmV0LXByaXZhdGUvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9sb3Jhcy9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEuc2FmZXRlbnNvcnM_WC1BbXotQWxnb3JpdGhtPUFXUzQtSE1BQy1TSEEyNTYmWC1BbXotQ3JlZGVudGlhbD1GSVhUVVJFS0VZSUQlMkYyMDI2MTExMCUyRmF1dG8lMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjYxMTEwVDEyMDAwMFomWC1BbXotRXhwaXJlcz0yNzAwJlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCZYLUFtei1TaWduYXR1cmU9MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMCJ9.ymNCcxuwW9FYQ1RZ2Ff0eU4OTqHcOA0PUtsmrToJLXs",
+      "verify": {
+        "key": "golden-fixture-hmac-key-not-for-production-use-00000000000000000",
+        "nowUnix": 1794312000,
+        "deploymentId": "0b6c3f6e-5a1d-4c2e-9f3a-7d8e9c0b1a2f"
+      },
+      "expect": {
+        "monet": "shape",
+        "deploy": "shape",
+        "node": "shape"
+      }
+    },
+    {
       "name": "bad_prefix",
       "note": "Wrong version prefix.",
       "ref": "mlr2.eyJwIjoibW9uZXQvY213czBmaXh0dXJlMDAwMDAwMDAwMDAwMS9jbXByMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2NtbHYwZml4dHVyZTAwMDAwMDAwMDAwMDEtY2NlYTRhMzQ3YzM2LnNhZmV0ZW5zb3JzIiwiaCI6ImNjZWE0YTM0N2MzNjAyMmY3NjNiN2E5MDVhYjFjMzg4MDc4YWEyYjQ5YjdiYmVlMzMyNjMyYWQ4MTBiODBmM2EiLCJuIjoxODY2NDY1MjgsImQiOiIwYjZjM2Y2ZS01YTFkLTRjMmUtOWYzYS03ZDhlOWMwYjFhMmYiLCJlIjoxNzk0MzE5MjAwLCJ1IjoiaHR0cHM6Ly8wMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZi5yMi5jbG91ZGZsYXJlc3RvcmFnZS5jb20vbW9uZXQtcHJpdmF0ZS9jbXdzMGZpeHR1cmUwMDAwMDAwMDAwMDAxL2xvcmFzL2NtcHIwZml4dHVyZTAwMDAwMDAwMDAwMDEvY21sdjBmaXh0dXJlMDAwMDAwMDAwMDAwMS5zYWZldGVuc29ycz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUZJWFRVUkVLRVlJRCUyRjIwMjYxMTEwJTJGYXV0byUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjExMTBUMTIwMDAwWiZYLUFtei1FeHBpcmVzPTI3MDAmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JlgtQW16LVNpZ25hdHVyZT0wMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIn0.pD7PJsy_udbHyTES-50hSpyglCe8yZUDd0-OCHnIMUU",
